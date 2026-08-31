@@ -2,3 +2,4 @@ pandas>=2.2
 pytest>=8.0
 requests>=2.32
 yfinance>=0.2.65
+exchange_calendars>=4.12,<5.0
