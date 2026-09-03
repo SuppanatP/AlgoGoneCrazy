@@ -16,6 +16,7 @@ from market_data.config import (
     AGGREGATION_VERSION,
     BAR_INTERVAL,
     EXPECTED_SUBBAR_COUNT,
+    AVAILABLE_INSTRUMENTS,
     INSTRUMENTS,
     PANDAS_AGGREGATION_FREQUENCY,
     Instrument,
@@ -276,6 +277,7 @@ def aggregate_30m_bars(
     end_utc: datetime,
     coverage_as_of_utc: datetime,
     generated_at_utc: datetime | None = None,
+    instruments: tuple[Instrument, ...] = INSTRUMENTS,
 ) -> AggregationResult:
     """Aggregate complete windows and record incomplete windows without refetching."""
     source = _prepare_source_bars(accepted_5m_bars)
@@ -285,7 +287,7 @@ def aggregate_30m_bars(
     complete_rows: list[dict[str, object]] = []
     incomplete_rows: list[dict[str, object]] = []
 
-    for instrument in INSTRUMENTS:
+    for instrument in instruments:
         windows = _full_expected_windows(
             instrument,
             start_utc,
@@ -294,6 +296,7 @@ def aggregate_30m_bars(
         )
         instrument_rows = source.loc[
             source["instrument_id"].eq(instrument.instrument_id)
+            & source["source"].eq(instrument.provider)
         ].copy()
         if not instrument_rows.empty:
             instrument_rows["aggregate_open_time_utc"] = _bucket_opens(
@@ -385,17 +388,24 @@ def _aggregation_summary(
     end_utc: datetime,
     coverage_as_of_utc: datetime,
     generated_at_utc: datetime,
+    selected_instruments: tuple[Instrument, ...],
 ) -> dict[str, object]:
-    instruments: dict[str, object] = {}
-    for instrument in INSTRUMENTS:
+    instrument_summaries: dict[str, object] = {}
+    for instrument in selected_instruments:
         complete_count = int(
-            result.complete["instrument_id"].eq(instrument.instrument_id).sum()
+            (
+                result.complete["instrument_id"].eq(instrument.instrument_id)
+                & result.complete["source"].eq(instrument.provider)
+            ).sum()
         )
         incomplete_count = int(
-            result.incomplete["instrument_id"].eq(instrument.instrument_id).sum()
+            (
+                result.incomplete["instrument_id"].eq(instrument.instrument_id)
+                & result.incomplete["source"].eq(instrument.provider)
+            ).sum()
         )
         eligible_count = complete_count + incomplete_count
-        instruments[instrument.source_symbol] = {
+        instrument_summaries[f"{instrument.provider}:{instrument.source_symbol}"] = {
             "complete_30m_bars": complete_count,
             "incomplete_30m_windows": incomplete_count,
             "completion_ratio": (
@@ -415,7 +425,7 @@ def _aggregation_summary(
             coverage_as_of_utc
         ).isoformat(),
         "generated_at_utc": _as_utc_timestamp(generated_at_utc).isoformat(),
-        "instruments": instruments,
+        "instruments": instrument_summaries,
     }
 
 
@@ -424,6 +434,18 @@ def run_aggregation(input_directory: Path, output_directory: Path) -> Aggregatio
     source_path = input_directory / "market_bars_5m.csv"
     ingestion_summary_path = input_directory / "ingestion_summary.json"
     source_bars = pd.read_csv(source_path)
+    source_pairs = set(
+        zip(source_bars["instrument_id"], source_bars["source"], strict=False)
+    )
+    instruments = tuple(
+        instrument
+        for instrument in AVAILABLE_INSTRUMENTS
+        if (instrument.instrument_id, instrument.provider) in source_pairs
+    )
+    if not instruments:
+        raise ValueError(
+            "The accepted source file contains no configured instrument/source pairs"
+        )
     start, end, coverage_as_of = _load_ingestion_range(ingestion_summary_path)
     generated_at = datetime.now(timezone.utc)
     result = aggregate_30m_bars(
@@ -432,6 +454,7 @@ def run_aggregation(input_directory: Path, output_directory: Path) -> Aggregatio
         end,
         coverage_as_of,
         generated_at_utc=generated_at,
+        instruments=instruments,
     )
 
     complete_path = output_directory / "market_bars_30m.csv"
@@ -448,6 +471,7 @@ def run_aggregation(input_directory: Path, output_directory: Path) -> Aggregatio
                 end,
                 coverage_as_of,
                 generated_at,
+                instruments,
             ),
             indent=2,
         )
@@ -473,14 +497,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("data"),
-        help="Directory containing ingestion outputs (default: data).",
+        default=Path("data/staging/combined"),
+        help=(
+            "Directory containing ingestion outputs "
+            "(default: data/staging/combined)."
+        ),
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("data"),
-        help="Directory for aggregation outputs (default: data).",
+        default=Path("data/staging/combined"),
+        help=(
+            "Directory for aggregation outputs "
+            "(default: data/staging/combined)."
+        ),
     )
     return parser
 

@@ -16,7 +16,7 @@ from market_data.config import (
     BACKFILL_VERSION,
     BAR_INTERVAL,
     EXPECTED_SUBBAR_COUNT,
-    INSTRUMENTS,
+    AVAILABLE_INSTRUMENTS,
     MIN_BACKFILL_OBSERVED_SUBBARS,
     Instrument,
 )
@@ -324,12 +324,15 @@ def backfill_30m_bars(
     evaluated = _as_utc_timestamp(
         evaluated_at_utc or datetime.now(timezone.utc)
     )
-    instruments = {instrument.instrument_id: instrument for instrument in INSTRUMENTS}
+    instruments = {
+        (instrument.instrument_id, instrument.provider): instrument
+        for instrument in AVAILABLE_INSTRUMENTS
+    }
     backfilled_rows: list[dict[str, object]] = []
     unresolved_rows: list[dict[str, object]] = []
 
     for _, window in incomplete.iterrows():
-        instrument = instruments.get(window["instrument_id"])
+        instrument = instruments.get((window["instrument_id"], window["source"]))
         if instrument is None:
             unresolved_rows.append(
                 _unresolved_row(
@@ -340,6 +343,7 @@ def backfill_30m_bars(
 
         instrument_rows = source.loc[
             source["instrument_id"].eq(instrument.instrument_id)
+            & source["source"].eq(instrument.provider)
         ]
         expected_times = pd.date_range(
             window["bar_open_time_utc"],
@@ -472,7 +476,7 @@ def backfill_30m_bars(
         ascending=[True, True, False],
     )
     combined = combined.drop_duplicates(
-        subset=["instrument_id", "bar_interval", "bar_open_time_utc"],
+        subset=["instrument_id", "source", "bar_interval", "bar_open_time_utc"],
         keep="first",
     ).drop(columns=["_origin_priority"])
     combined = combined.reindex(columns=AGGREGATED_BAR_COLUMNS).reset_index(drop=True)
@@ -540,14 +544,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("data"),
-        help="Directory containing ingestion and aggregation outputs.",
+        default=Path("data/staging/combined"),
+        help=(
+            "Directory containing ingestion and aggregation outputs "
+            "(default: data/staging/combined)."
+        ),
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("data"),
-        help="Directory for backfill outputs (default: data).",
+        default=Path("data/staging/combined"),
+        help=(
+            "Directory for backfill outputs "
+            "(default: data/staging/combined)."
+        ),
     )
     return parser
 

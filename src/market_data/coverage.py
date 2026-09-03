@@ -46,7 +46,8 @@ def _instrument_audit(
         instrument, start_utc, end_utc, retrieved_at_utc
     )
     actual = accepted.loc[
-        accepted["instrument_id"] == instrument.instrument_id
+        accepted["instrument_id"].eq(instrument.instrument_id)
+        & accepted["source"].eq(instrument.provider)
     ].copy()
     expected = schedule.expected_bars.copy()
 
@@ -102,6 +103,7 @@ def audit_market_coverage(
     start_utc: datetime,
     end_utc: datetime,
     retrieved_at_utc: datetime,
+    instruments: tuple[Instrument, ...] = INSTRUMENTS,
 ) -> CoverageAudit:
     """Reject off-session rows and report expected bars that are absent."""
     audits = [
@@ -112,7 +114,7 @@ def audit_market_coverage(
             end_utc,
             retrieved_at_utc,
         )
-        for instrument in INSTRUMENTS
+        for instrument in instruments
     ]
 
     valid = pd.concat(

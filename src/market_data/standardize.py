@@ -1,4 +1,4 @@
-"""Map Yahoo and Binance bars into one provider-neutral schema."""
+"""Map provider-native bars into one provider-neutral schema."""
 
 from __future__ import annotations
 
@@ -32,6 +32,116 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series(np.nan, index=frame.index, dtype="float64")
     return pd.to_numeric(frame[column], errors="coerce")
+
+
+def _numeric_alias(frame: pd.DataFrame, *columns: str) -> pd.Series:
+    for column in columns:
+        if column in frame.columns:
+            return pd.to_numeric(frame[column], errors="coerce")
+    return pd.Series(np.nan, index=frame.index, dtype="float64")
+
+
+def _trade_count(frame: pd.DataFrame, *columns: str) -> pd.Series:
+    values = _numeric_alias(frame, *columns)
+    return values.round().astype("Int64")
+
+
+def standardize_alpaca_bars(
+    raw: pd.DataFrame,
+    instrument: Instrument,
+    retrieved_at_utc: datetime,
+) -> pd.DataFrame:
+    """Convert Alpaca REST stock bars into canonical source bars."""
+    if instrument.provider != "alpaca_market_data":
+        raise ValueError(f"{instrument.source_symbol} is not an Alpaca instrument")
+
+    retrieved = _as_utc(retrieved_at_utc)
+    open_times = pd.to_datetime(raw["t"], errors="coerce", utc=True)
+    close_times = open_times + pd.Timedelta(BAR_DURATION)
+    close = _numeric_alias(raw, "c", "close")
+    standardized = pd.DataFrame(
+        {
+            "instrument_id": instrument.instrument_id,
+            "source": instrument.provider,
+            "source_symbol": instrument.source_symbol,
+            "asset_class": instrument.asset_class,
+            "exchange": instrument.exchange,
+            "bar_interval": BAR_INTERVAL,
+            "bar_open_time_utc": open_times,
+            "bar_close_time_utc": close_times,
+            "session_date_local": open_times.dt.tz_convert(
+                instrument.session_timezone
+            ).dt.date,
+            "open": _numeric_alias(raw, "o", "open"),
+            "high": _numeric_alias(raw, "h", "high"),
+            "low": _numeric_alias(raw, "l", "low"),
+            "close": close,
+            "adjusted_close": close,
+            "volume": _numeric_alias(raw, "v", "volume"),
+            "volume_unit": instrument.volume_unit,
+            "quote_volume": np.nan,
+            "quote_currency": instrument.quote_currency,
+            "trade_count": _trade_count(raw, "n", "trade_count"),
+            "is_final": close_times <= pd.Timestamp(retrieved),
+            "retrieved_at_utc": pd.Timestamp(retrieved),
+        }
+    )
+    return standardized[BASE_BAR_COLUMNS]
+
+
+def standardize_moomoo_bars(
+    raw: pd.DataFrame,
+    instrument: Instrument,
+    retrieved_at_utc: datetime,
+) -> pd.DataFrame:
+    """Convert Moomoo local-time historical candlesticks into source bars."""
+    if instrument.provider != "moomoo_openapi":
+        raise ValueError(f"{instrument.source_symbol} is not a Moomoo instrument")
+    if "time_key" not in raw.columns:
+        raise ValueError("Moomoo response is missing time_key")
+
+    retrieved = _as_utc(retrieved_at_utc)
+    local_times = pd.DatetimeIndex(
+        pd.to_datetime(raw["time_key"], errors="coerce")
+    )
+    if local_times.tz is None:
+        local_times = local_times.tz_localize(
+            instrument.session_timezone,
+            ambiguous="infer",
+            nonexistent="shift_forward",
+        )
+    open_index = local_times.tz_convert("UTC")
+    open_times = pd.Series(open_index, index=raw.index)
+    close_times = open_times + pd.Timedelta(BAR_DURATION)
+    close = _numeric_alias(raw, "close", "closePrice")
+    standardized = pd.DataFrame(
+        {
+            "instrument_id": instrument.instrument_id,
+            "source": instrument.provider,
+            "source_symbol": instrument.source_symbol,
+            "asset_class": instrument.asset_class,
+            "exchange": instrument.exchange,
+            "bar_interval": BAR_INTERVAL,
+            "bar_open_time_utc": open_times,
+            "bar_close_time_utc": close_times,
+            "session_date_local": open_times.dt.tz_convert(
+                instrument.session_timezone
+            ).dt.date,
+            "open": _numeric_alias(raw, "open", "openPrice"),
+            "high": _numeric_alias(raw, "high", "highPrice"),
+            "low": _numeric_alias(raw, "low", "lowPrice"),
+            "close": close,
+            "adjusted_close": close,
+            "volume": _numeric_alias(raw, "volume"),
+            "volume_unit": instrument.volume_unit,
+            "quote_volume": _numeric_alias(raw, "turnover"),
+            "quote_currency": instrument.quote_currency,
+            "trade_count": _trade_count(raw, "trade_count"),
+            "is_final": close_times <= pd.Timestamp(retrieved),
+            "retrieved_at_utc": pd.Timestamp(retrieved),
+        }
+    )
+    return standardized[BASE_BAR_COLUMNS]
 
 
 def standardize_yahoo_bars(

@@ -3,8 +3,8 @@
 This first project phase extracts and cleans completed five-minute source bars
 for:
 
-- `SPY` from Yahoo Finance
-- `ES3.SI` from Yahoo Finance
+- `SPY` from Alpaca Market Data
+- `SG.ES3` from Moomoo OpenAPI when entitled, or recent `ES3.SI` from Yahoo
 - `BTCUSDT` from Binance Spot
 
 It also provides separate steps that derive 30-minute OHLCV bars and apply a
@@ -17,7 +17,7 @@ belong in later modules.
 Extraction and cleaning are separate modules but run in one application:
 
 ```text
-Yahoo / Binance
+Alpaca / Moomoo OpenD / Binance
       -> source-specific extraction
       -> common standardization
       -> structural validation
@@ -31,6 +31,16 @@ Accepted 5m bars + expected market calendar
 Accepted 5m bars + complete 30m bars + incomplete-window records
       -> conservative backfill rules
       -> backfilled bars + combined usable bars + unresolved windows
+
+Selected final 30m file from each asset
+      -> source-selection and duplicate checks
+      -> one canonical long-format 30m CSV
+
+Configuration-driven orchestrator
+      -> waits for all ingestions
+      -> waits for all aggregations
+      -> waits for all backfills
+      -> runs consolidation last
 ```
 
 Five minutes is the source resolution. It preserves enough detail to construct
@@ -42,8 +52,10 @@ strategy to one aggregation schedule now.
 ```text
 src/market_data/
   config.py              Instrument metadata and ingestion settings
-  extractors/yahoo.py    SPY and ES3.SI extraction
+  extractors/alpaca.py   SPY REST extraction and pagination
+  extractors/moomoo.py   SG.ES3 OpenD extraction and pagination
   extractors/binance.py  BTCUSDT extraction and pagination
+  extractors/yahoo.py    Selectable Yahoo fallback extraction
   standardize.py         Common provider-neutral columns
   validate.py            Shared quality rules
   sessions.py            Expected bars from XNYS, XSES, and 24/7 calendars
@@ -51,10 +63,16 @@ src/market_data/
   pipeline.py            Command-line orchestration and outputs
   aggregation.py         Complete 30m OHLCV construction and gap reporting
   backfill.py            Conservative 30m gap handling and provenance
+  consolidation.py       Selected-source canonical long-format construction
+  orchestration.py       Strict sequential workflow orchestration
+config/
+  market_data_pipeline.json  Selected assets, providers, ranges, and paths
 test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
 run_aggregation.py       Separate 30m aggregation entry point
 run_backfill.py          Separate non-destructive backfill entry point
+run_consolidation.py     Canonical three-asset CSV entry point
+run_market_data_pipeline.py  One-command sequential workflow entry point
 ```
 
 ## Setup
@@ -68,69 +86,238 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Yahoo and Binance public market-data downloads do not require API keys.
-
-## Run
-
-Download the latest 59 days, which stays within Yahoo's intraday-history limit:
+Create the local environment file:
 
 ```bash
-python run_ingestion.py
+cp .env.example .env
 ```
 
-Use a shorter lookback:
+Add the Alpaca credentials generated in the Alpaca dashboard:
+
+```text
+ALPACA_API_KEY=your_key
+ALPACA_SECRET_KEY=your_secret
+ALPACA_DATA_FEED=sip
+```
+
+The `.env` file is ignored by Git. Do not place credentials directly in source
+code or commit them.
+
+Moomoo does not use the Alpaca-style key and secret for this workflow. Install
+Moomoo OpenD, log in, confirm that the account has Singapore quote rights, and
+leave OpenD running. The default local connection is configured in `.env`:
+
+```text
+MOOMOO_OPEND_HOST=127.0.0.1
+MOOMOO_OPEND_PORT=11111
+```
+
+Binance public market-data downloads do not require credentials.
+
+## Commands and options
+
+Run commands from the repository root with the virtual environment activated.
+Every command provides built-in help:
 
 ```bash
-python run_ingestion.py --lookback-days 14
+python run_ingestion.py --help
+python run_aggregation.py --help
+python run_backfill.py --help
+python run_consolidation.py --help
+python run_market_data_pipeline.py --help
 ```
 
-Or provide an exact half-open UTC range (`start <= bar open < end`):
+### Ingestion options
+
+| Argument | Meaning |
+|---|---|
+| `--provider NAME` | Select `alpaca`, `binance`, `yahoo`, or `moomoo`; canonical provider names also work |
+| `--symbol SYMBOL` | Select `SPY`, `BTCUSDT`, `ES3.SI`, or `SG.ES3` |
+| `--list-instruments` | List every configured provider-symbol pair and exit |
+| `--start TIMESTAMP` | Inclusive UTC start |
+| `--end TIMESTAMP` | Exclusive UTC end |
+| `--lookback-days N` | Lookback used when `--start` is omitted; default 1,095 days |
+| `--output-dir PATH` | Override the automatically selected staging directory |
+
+Targeted runs are written under `data/staging/<provider>/<symbol>/`. A bare
+`python run_ingestion.py` uses the default Alpaca, Moomoo, and Binance set and
+writes to `data/staging/combined/`; avoid that command while Moomoo Singapore
+data is unavailable.
+
+### Aggregation and backfill options
+
+| Command | Argument | Meaning |
+|---|---|---|
+| `run_aggregation.py` | `--input-dir PATH` | Ingestion output directory; default `data/staging/combined` |
+| `run_aggregation.py` | `--output-dir PATH` | Aggregation output directory; default `data/staging/combined` |
+| `run_backfill.py` | `--input-dir PATH` | Ingestion and aggregation directory; default `data/staging/combined` |
+| `run_backfill.py` | `--output-dir PATH` | Backfill output directory; default `data/staging/combined` |
+
+### Consolidation options
+
+| Argument | Meaning |
+|---|---|
+| Repeated `--input-dir PATH` | Replace the three default selected-source directories |
+| `--output-file PATH` | Canonical CSV; default `data/canonical/market_bars_30m.csv` |
+| `--summary-file PATH` | JSON summary; default `data/canonical/consolidation_summary.json` |
+| `--allow-partial` | Permit consolidation when fewer than all three instruments are supplied |
+
+### Orchestrator option
+
+| Argument | Meaning |
+|---|---|
+| `--config PATH` | Workflow JSON; default `config/market_data_pipeline.json` |
+
+## Test provider connections
+
+List the available combinations, then use short targeted runs. These commands
+also test standardization, validation, and CSV writing:
 
 ```bash
-python run_ingestion.py \
-  --start 2026-08-01T00:00:00Z \
-  --end 2026-08-28T00:00:00Z
+python run_ingestion.py --list-instruments
+python run_ingestion.py --provider alpaca --symbol SPY --lookback-days 7
+python run_ingestion.py --provider binance --symbol BTCUSDT --lookback-days 2
+python run_ingestion.py --provider yahoo --symbol ES3.SI --lookback-days 7
 ```
 
-Yahoo intraday requests cannot extend beyond the latest 60 days. The CLI limits
-automatic lookback to 59 days; manually supplied dates must respect the same
-provider restriction.
-
-After ingestion finishes, generate the 30-minute bars:
+If Moomoo Singapore entitlement is obtained later:
 
 ```bash
-python run_aggregation.py
+python run_ingestion.py --provider moomoo --symbol SG.ES3 --lookback-days 7
 ```
 
-Use different input and output directories if required:
+Yahoo five-minute data is only a recent ES3 fallback; it cannot provide the
+intended three-to-five-year intraday history.
+
+## Recommended one-command workflow
+
+Edit `config/market_data_pipeline.json` to choose each provider, symbol, and
+date range, then run:
 
 ```bash
-python run_aggregation.py --input-dir data --output-dir data
+python run_market_data_pipeline.py
 ```
 
-The aggregation command only reads existing ingestion outputs. It does not call
-Yahoo or Binance and does not attempt to refetch a missing five-minute interval.
+The entry point is a pipeline orchestrator. It uses strict stage barriers:
 
-Then apply the currently approved backfill methods:
+1. Every configured asset must finish ingestion.
+2. Every configured asset must finish aggregation.
+3. Every configured asset must finish backfill.
+4. Consolidation runs only after all backfills finish.
+
+An exception stops the process immediately, prints `Pipeline stopped`, and
+prevents all later stages from being called. Files completed before the failure
+remain available for diagnosis.
+
+Each item in the configuration supports one of two range forms:
+
+```json
+{
+  "provider": "alpaca",
+  "symbol": "SPY",
+  "start": "2023-09-02T00:00:00Z",
+  "end": "2026-09-02T00:00:00Z"
+}
+```
+
+or a rolling lookback:
+
+```json
+{
+  "provider": "alpaca",
+  "symbol": "SPY",
+  "lookback_days": 1095
+}
+```
+
+| Configuration field | Meaning |
+|---|---|
+| `assets` | Non-empty list of provider/symbol requests |
+| `provider` | Provider alias or canonical provider name |
+| `symbol` | Provider symbol configured in `config.py` |
+| `start`, `end` | Exact half-open UTC range; both are required together |
+| `lookback_days` | Rolling range alternative to `start`; `end` is optional |
+| `output_dir` | Optional per-asset staging-directory override |
+| `output_root` | Default staging root when `output_dir` is omitted |
+| `canonical_output_file` | Final long-format canonical CSV path |
+| `canonical_summary_file` | Consolidation summary JSON path |
+
+Only one provider can be configured for each internal `instrument_id`. Source
+resolution remains fixed at five minutes and aggregation remains fixed at 30
+minutes in this phase; the configured timeframe controls the historical date
+range, not the bar interval.
+
+## Manual equivalent workflow
+
+Use one exact half-open UTC range for all providers. Keep the temporary shared
+range within Yahoo's recent intraday limit. These dates are an example:
 
 ```bash
-python run_backfill.py
+DATA_START="2026-07-06T00:00:00Z"
+DATA_END="2026-09-02T00:00:00Z"
+
+python run_ingestion.py --provider alpaca --symbol SPY \
+  --start "$DATA_START" --end "$DATA_END"
+python run_ingestion.py --provider binance --symbol BTCUSDT \
+  --start "$DATA_START" --end "$DATA_END"
+python run_ingestion.py --provider yahoo --symbol ES3.SI \
+  --start "$DATA_START" --end "$DATA_END"
 ```
 
-The normal sequence is therefore ingestion, aggregation, then backfill. The
-backfill command reads the existing CSV files, does not call a provider, and
-does not overwrite either aggregation input file.
+Aggregate each staging directory independently:
+
+```bash
+python run_aggregation.py --input-dir data/staging/alpaca_market_data/SPY \
+  --output-dir data/staging/alpaca_market_data/SPY
+python run_aggregation.py --input-dir data/staging/binance_spot/BTCUSDT \
+  --output-dir data/staging/binance_spot/BTCUSDT
+python run_aggregation.py --input-dir data/staging/yahoo_finance/ES3_SI \
+  --output-dir data/staging/yahoo_finance/ES3_SI
+```
+
+Apply backfill independently so no provider can fill another provider's bars:
+
+```bash
+python run_backfill.py --input-dir data/staging/alpaca_market_data/SPY \
+  --output-dir data/staging/alpaca_market_data/SPY
+python run_backfill.py --input-dir data/staging/binance_spot/BTCUSDT \
+  --output-dir data/staging/binance_spot/BTCUSDT
+python run_backfill.py --input-dir data/staging/yahoo_finance/ES3_SI \
+  --output-dir data/staging/yahoo_finance/ES3_SI
+```
+
+Finally, consolidate the three selected sources:
+
+```bash
+python run_consolidation.py
+```
+
+The default consolidation selects Alpaca SPY, Binance BTCUSDT, and Yahoo
+ES3.SI. To replace ES3 with another provider later, pass all selected directories
+explicitly:
+
+```bash
+python run_consolidation.py \
+  --input-dir data/staging/alpaca_market_data/SPY \
+  --input-dir data/staging/binance_spot/BTCUSDT \
+  --input-dir path/to/the/replacement/es3/directory
+```
+
+Consolidation rejects duplicate bar keys and rejects more than one provider for
+the same `instrument_id`. It unions the rows in long format and does not create
+artificial observations while SPY or ES3 is closed.
 
 ## Outputs
 
-The `data/` directory is ignored by Git. Each run replaces five stable files:
+The `data/` directory is ignored by Git. Each ingestion replaces five stable
+files inside its selected staging run directory:
 
 ```text
-data/market_bars_5m.csv
-data/rejected_market_bars_5m.csv
-data/missing_market_bars_5m.csv
-data/market_session_coverage.csv
-data/ingestion_summary.json
+<staging-run>/market_bars_5m.csv
+<staging-run>/rejected_market_bars_5m.csv
+<staging-run>/missing_market_bars_5m.csv
+<staging-run>/market_session_coverage.csv
+<staging-run>/ingestion_summary.json
 ```
 
 `market_bars_5m.csv` contains completed bars that passed validation. Plausible
@@ -156,9 +343,9 @@ each instrument.
 The separate aggregation run replaces three additional files:
 
 ```text
-data/market_bars_30m.csv
-data/incomplete_market_bars_30m.csv
-data/aggregation_summary.json
+<staging-run>/market_bars_30m.csv
+<staging-run>/incomplete_market_bars_30m.csv
+<staging-run>/aggregation_summary.json
 ```
 
 `market_bars_30m.csv` contains only windows with all six expected five-minute
@@ -181,10 +368,10 @@ simply not eligible for aggregation yet.
 The backfill run replaces four additional files:
 
 ```text
-data/backfilled_market_bars_30m.csv
-data/market_bars_30m_with_backfill.csv
-data/unresolved_market_bars_30m.csv
-data/backfill_summary.json
+<staging-run>/backfilled_market_bars_30m.csv
+<staging-run>/market_bars_30m_with_backfill.csv
+<staging-run>/unresolved_market_bars_30m.csv
+<staging-run>/backfill_summary.json
 ```
 
 `backfilled_market_bars_30m.csv` contains only incomplete windows resolved by
@@ -192,6 +379,19 @@ the approved methods. `market_bars_30m_with_backfill.csv` combines those rows
 with the original complete bars and is the convenient input for later feature
 work. `unresolved_market_bars_30m.csv` retains every unsupported case and its
 reason. `backfill_summary.json` gives compact method and outcome counts.
+
+The consolidation run replaces two canonical outputs:
+
+```text
+data/canonical/market_bars_30m.csv
+data/canonical/consolidation_summary.json
+```
+
+`market_bars_30m.csv` is the long-format union of the selected primary source
+for each instrument. It retains `source`, `bar_origin`, backfill provenance, and
+quality columns. Rows are not aligned into a wide matrix at this stage because
+the three assets have different trading sessions. The summary records row
+counts, date coverage, source symbols, and bar origins for each instrument.
 
 ## Backfill rules
 
@@ -224,7 +424,7 @@ silently.
 | Column | Description |
 |---|---|
 | `instrument_id` | Stable internal instrument identifier |
-| `source` | `yahoo_finance` or `binance_spot` |
+| `source` | Provider identifier, including `alpaca_market_data`, `moomoo_openapi`, `yahoo_finance`, or `binance_spot` |
 | `source_symbol` | Provider symbol |
 | `asset_class` | Instrument class |
 | `exchange` | Trading venue |
@@ -233,19 +433,19 @@ silently.
 | `bar_close_time_utc` | Exclusive bar end in UTC |
 | `session_date_local` | Date in the instrument's local session timezone |
 | `open`, `high`, `low`, `close` | Unadjusted source OHLC prices |
-| `adjusted_close` | Yahoo adjusted close when available; BTC equals close |
+| `adjusted_close` | Equals raw close in the active unadjusted-source requests |
 | `volume` | Source-native base volume |
 | `volume_unit` | `shares`, `units`, or `BTC` |
-| `quote_volume` | Binance USDT turnover; blank for Yahoo |
+| `quote_volume` | Moomoo SGD turnover or Binance USDT turnover; blank for Alpaca |
 | `quote_currency` | USD, SGD, or USDT |
-| `trade_count` | Binance trade count; blank for Yahoo |
+| `trade_count` | Alpaca or Binance trade count; blank when Moomoo omits it |
 | `is_final` | Whether the source bar has closed |
 | `retrieved_at_utc` | Extraction timestamp |
 | `quality_status` | `pass` or `warning` for accepted rows |
 | `quality_flags` | Semicolon-separated warning explanations |
 
 The same schema does not make volume directly comparable. SPY volume is shares,
-ES3.SI volume is ETF units, and BTCUSDT volume is bitcoin.
+SG.ES3 volume is ETF units, and BTCUSDT volume is bitcoin.
 
 ## Validation rules
 
@@ -261,7 +461,7 @@ Rows are rejected when they contain:
 
 Zero volume and an intrabar range above 20% are retained as warnings.
 
-The session check uses the `XNYS` calendar for SPY, `XSES` for ES3.SI, and a
+The session check uses the `XNYS` calendar for SPY, `XSES` for SG.ES3, and a
 continuous UTC calendar for BTCUSDT. Regular session hours, exchange breaks,
 weekends, holidays, and early closes determine which bars should exist. A
 weekend or holiday produces no rejected bars because no market data was
@@ -276,11 +476,3 @@ The cleaner never forward-fills or silently invents prices. This means a later
 feature module can calculate intraday returns within `session_date_local` and
 treat overnight movements separately, without learning artificial zero returns
 while an equity market was closed.
-
-## Test without downloading data
-
-```bash
-python -m pytest -q
-```
-
-The tests use synthetic Yahoo and Binance responses and make no network calls.

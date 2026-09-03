@@ -1,0 +1,25 @@
+{
+  "output_root": "data/staging",
+  "canonical_output_file": "data/canonical/market_bars_30m.csv",
+  "canonical_summary_file": "data/canonical/consolidation_summary.json",
+  "assets": [
+    {
+      "provider": "alpaca",
+      "symbol": "SPY",
+      "start": "2023-09-02T00:00:00Z",
+      "end": "2026-09-02T00:00:00Z"
+    },
+    {
+      "provider": "binance",
+      "symbol": "BTCUSDT",
+      "start": "2023-09-02T00:00:00Z",
+      "end": "2026-09-02T00:00:00Z"
+    },
+    {
+      "provider": "yahoo",
+      "symbol": "ES3.SI",
+      "start": "2026-07-05T00:00:00Z",
+      "end": "2026-09-02T00:00:00Z"
+    }
+  ]
+}

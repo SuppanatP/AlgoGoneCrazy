@@ -8,10 +8,24 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
-from market_data.config import DEFAULT_LOOKBACK_DAYS, INSTRUMENTS, Instrument
+from market_data.config import (
+    AVAILABLE_INSTRUMENTS,
+    DEFAULT_DATA_DELAY_MINUTES,
+    DEFAULT_LOOKBACK_DAYS,
+    INSTRUMENTS,
+    PANDAS_BAR_FREQUENCY,
+    Instrument,
+    select_instruments,
+)
 from market_data.coverage import audit_market_coverage
-from market_data.extractors import fetch_binance_bars, fetch_yahoo_bars
+from market_data.extractors import (
+    fetch_alpaca_bars,
+    fetch_binance_bars,
+    fetch_moomoo_bars,
+    fetch_yahoo_bars,
+)
 from market_data.schema import (
     BASE_BAR_COLUMNS,
     COVERAGE_GAP_COLUMNS,
@@ -22,7 +36,9 @@ from market_data.schema import (
 from market_data.sessions import build_market_schedule
 from market_data.standardize import (
     restrict_bar_range,
+    standardize_alpaca_bars,
     standardize_binance_bars,
+    standardize_moomoo_bars,
     standardize_yahoo_bars,
 )
 from market_data.validate import validate_bars
@@ -35,6 +51,15 @@ def _parse_utc(value: str) -> datetime:
     else:
         timestamp = timestamp.tz_convert("UTC")
     return timestamp.to_pydatetime()
+
+
+def _default_end_utc() -> datetime:
+    """Use one completed, free-SIP-compatible end time for every provider."""
+    now = pd.Timestamp.now(tz="UTC")
+    return (
+        now.floor(PANDAS_BAR_FREQUENCY)
+        - pd.Timedelta(minutes=DEFAULT_DATA_DELAY_MINUTES)
+    ).to_pydatetime()
 
 
 def _standardize_one(
@@ -53,7 +78,17 @@ def _standardize_one(
         )
         return pd.DataFrame(columns=BASE_BAR_COLUMNS)
 
-    if instrument.provider == "yahoo_finance":
+    if instrument.provider == "alpaca_market_data":
+        raw = fetch_alpaca_bars(instrument, start_utc, end_utc)
+        standardized = standardize_alpaca_bars(
+            raw, instrument, retrieved_at_utc
+        )
+    elif instrument.provider == "moomoo_openapi":
+        raw = fetch_moomoo_bars(instrument, start_utc, end_utc)
+        standardized = standardize_moomoo_bars(
+            raw, instrument, retrieved_at_utc
+        )
+    elif instrument.provider == "yahoo_finance":
         raw = fetch_yahoo_bars(instrument, start_utc, end_utc)
         standardized = standardize_yahoo_bars(raw, instrument, retrieved_at_utc)
     elif instrument.provider == "binance_spot":
@@ -86,17 +121,24 @@ def _summary(
     start_utc: datetime,
     end_utc: datetime,
     retrieved_at_utc: datetime,
+    selected_instruments: tuple[Instrument, ...],
 ) -> dict[str, object]:
-    instruments: dict[str, object] = {}
-    for instrument in INSTRUMENTS:
+    instrument_summaries: dict[str, object] = {}
+    for instrument in selected_instruments:
+        source_mask = (
+            standardized["instrument_id"].eq(instrument.instrument_id)
+            & standardized["source"].eq(instrument.provider)
+        )
         source_rows = standardized.loc[
-            standardized["instrument_id"] == instrument.instrument_id
+            source_mask
         ]
         accepted_rows = accepted.loc[
-            accepted["instrument_id"] == instrument.instrument_id
+            accepted["instrument_id"].eq(instrument.instrument_id)
+            & accepted["source"].eq(instrument.provider)
         ]
         rejected_rows = rejected.loc[
-            rejected["instrument_id"] == instrument.instrument_id
+            rejected["instrument_id"].eq(instrument.instrument_id)
+            & rejected["source"].eq(instrument.provider)
         ]
         missing_rows = missing_bars.loc[
             missing_bars["instrument_id"] == instrument.instrument_id
@@ -105,7 +147,8 @@ def _summary(
             sessions["instrument_id"] == instrument.instrument_id
         ]
         expected_count = int(session_rows["expected_bar_count"].sum())
-        instruments[instrument.source_symbol] = {
+        instrument_summaries[f"{instrument.provider}:{instrument.source_symbol}"] = {
+            "provider": instrument.provider,
             "calendar_name": instrument.calendar_name,
             "standardized_rows": int(len(source_rows)),
             "accepted_rows": int(len(accepted_rows)),
@@ -156,7 +199,7 @@ def _summary(
         "requested_start_utc": start_utc.isoformat(),
         "requested_end_utc_exclusive": end_utc.isoformat(),
         "coverage_evaluated_at_utc": retrieved_at_utc.isoformat(),
-        "instruments": instruments,
+        "instruments": instrument_summaries,
     }
 
 
@@ -164,8 +207,10 @@ def run_ingestion(
     start_utc: datetime,
     end_utc: datetime,
     output_directory: Path,
+    instruments: tuple[Instrument, ...] = INSTRUMENTS,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run one fail-fast ingestion and write stable output files."""
+    load_dotenv()
     if end_utc <= start_utc:
         raise ValueError("end_utc must be later than start_utc")
 
@@ -177,7 +222,7 @@ def run_ingestion(
             end_utc,
             retrieved_at_utc,
         )
-        for instrument in INSTRUMENTS
+        for instrument in instruments
     ]
     standardized = pd.concat(frames, ignore_index=True)
     structurally_accepted, structurally_rejected = validate_bars(standardized)
@@ -186,6 +231,7 @@ def run_ingestion(
         start_utc,
         end_utc,
         retrieved_at_utc,
+        instruments,
     )
     accepted = coverage.accepted
     rejected = pd.concat(
@@ -221,6 +267,7 @@ def run_ingestion(
                 start_utc,
                 end_utc,
                 retrieved_at_utc,
+                instruments,
             ),
             indent=2,
         )
@@ -242,8 +289,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Extract, standardize, and validate five-minute bars for "
-            "SPY, ES3.SI, and BTCUSDT."
+            "SPY, SG.ES3, and BTCUSDT over one shared UTC range."
         )
+    )
+    parser.add_argument(
+        "--provider",
+        help=(
+            "Run only one provider. Short names are accepted: alpaca, moomoo, "
+            "yahoo/yfinance, or binance."
+        ),
+    )
+    parser.add_argument(
+        "--symbol",
+        help=(
+            "Run only one configured provider symbol, for example SPY, "
+            "ES3.SI, SG.ES3, or BTCUSDT."
+        ),
+    )
+    parser.add_argument(
+        "--list-instruments",
+        action="store_true",
+        help="List selectable provider-symbol pairs and exit.",
     )
     parser.add_argument(
         "--start",
@@ -251,7 +317,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--end",
-        help="Exclusive UTC end date/time. Defaults to the current time.",
+        help=(
+            "Exclusive UTC end date/time. Defaults to the latest aligned time "
+            f"with a {DEFAULT_DATA_DELAY_MINUTES}-minute data delay."
+        ),
     )
     parser.add_argument(
         "--lookback-days",
@@ -262,23 +331,59 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("data"),
-        help="Output directory (default: data).",
+        help=(
+            "Output directory. Defaults to data for a full run, or a "
+            "provider/symbol subdirectory for a targeted run."
+        ),
     )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    end_utc = _parse_utc(args.end) if args.end else datetime.now(timezone.utc)
+    if args.list_instruments:
+        for instrument in AVAILABLE_INSTRUMENTS:
+            default_label = " (default)" if instrument in select_instruments() else ""
+            print(
+                f"{instrument.provider:<20} {instrument.source_symbol:<10} "
+                f"{instrument.instrument_id}{default_label}"
+            )
+        return
+
+    instruments = select_instruments(args.provider, args.symbol)
+    end_utc = _parse_utc(args.end) if args.end else _default_end_utc()
     if args.start:
         start_utc = _parse_utc(args.start)
     else:
-        if args.lookback_days < 1 or args.lookback_days > 59:
-            raise ValueError("--lookback-days must be between 1 and 59")
+        if args.lookback_days < 1:
+            raise ValueError("--lookback-days must be at least 1")
         start_utc = end_utc - timedelta(days=args.lookback_days)
 
-    run_ingestion(start_utc, end_utc, args.output_dir)
+    output_directory = args.output_dir
+    if output_directory is None:
+        if args.provider or args.symbol:
+            if len(instruments) == 1:
+                instrument = instruments[0]
+                safe_symbol = instrument.source_symbol.replace(".", "_")
+                output_directory = (
+                    Path("data")
+                    / "staging"
+                    / instrument.provider
+                    / safe_symbol
+                )
+            else:
+                output_directory = (
+                    Path("data") / "staging" / instruments[0].provider
+                )
+        else:
+            output_directory = Path("data") / "staging" / "combined"
+
+    selected = ", ".join(
+        f"{instrument.provider}:{instrument.source_symbol}"
+        for instrument in instruments
+    )
+    print(f"Selected instruments: {selected}")
+    run_ingestion(start_utc, end_utc, output_directory, instruments)
 
 
 if __name__ == "__main__":
