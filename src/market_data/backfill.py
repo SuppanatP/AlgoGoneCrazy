@@ -230,7 +230,10 @@ def _backfilled_row(
         if following_row is None:
             raise ValueError("Following adjacent row is required for synthetic close")
         close_price = following_row["open"]
-        adjusted_close = close_price
+        adjustment_factor = (
+            following_row["adjusted_close"] / following_row["close"]
+        )
+        adjusted_close = close_price * adjustment_factor
         close_source = "next_bar_open"
 
     high = max([open_price, close_price, *observed["high"].tolist()])

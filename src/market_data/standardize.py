@@ -54,6 +54,11 @@ def standardize_alpaca_bars(
     """Convert Alpaca REST stock bars into canonical source bars."""
     if instrument.provider != "alpaca_market_data":
         raise ValueError(f"{instrument.source_symbol} is not an Alpaca instrument")
+    if "adjusted_c" not in raw.columns:
+        raise ValueError(
+            "Alpaca bars are missing adjusted_c; fetch matching raw and "
+            "all-actions-adjusted bars before standardization"
+        )
 
     retrieved = _as_utc(retrieved_at_utc)
     open_times = pd.to_datetime(raw["t"], errors="coerce", utc=True)
@@ -76,7 +81,7 @@ def standardize_alpaca_bars(
             "high": _numeric_alias(raw, "h", "high"),
             "low": _numeric_alias(raw, "l", "low"),
             "close": close,
-            "adjusted_close": close,
+            "adjusted_close": _numeric(raw, "adjusted_c"),
             "volume": _numeric_alias(raw, "v", "volume"),
             "volume_unit": instrument.volume_unit,
             "quote_volume": np.nan,

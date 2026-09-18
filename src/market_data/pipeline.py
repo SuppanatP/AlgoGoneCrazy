@@ -196,6 +196,11 @@ def _summary(
 
     return {
         "bar_interval": "5m",
+        "price_policy": {
+            "ohlcv": "raw_provider_prices",
+            "alpaca_adjusted_close": "all_corporate_actions",
+            "dividend_cash_flows_tracked": False,
+        },
         "requested_start_utc": start_utc.isoformat(),
         "requested_end_utc_exclusive": end_utc.isoformat(),
         "coverage_evaluated_at_utc": retrieved_at_utc.isoformat(),
@@ -289,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Extract, standardize, and validate five-minute bars for "
-            "SPY, SG.ES3, and BTCUSDT over one shared UTC range."
+            "SPY, TLT, SG.ES3, and BTCUSDT over one shared UTC range."
         )
     )
     parser.add_argument(
@@ -302,7 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol",
         help=(
-            "Run only one configured provider symbol, for example SPY, "
+            "Run only one configured provider symbol, for example SPY, TLT, "
             "ES3.SI, SG.ES3, or BTCUSDT."
         ),
     )

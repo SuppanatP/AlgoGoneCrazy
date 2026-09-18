@@ -4,6 +4,7 @@ This first project phase extracts and cleans completed five-minute source bars
 for:
 
 - `SPY` from Alpaca Market Data
+- `TLT` from Alpaca Market Data
 - `SG.ES3` from Moomoo OpenAPI when entitled, or recent `ES3.SI` from Yahoo
 - `BTCUSDT` from Binance Spot
 
@@ -17,7 +18,7 @@ belong in later modules.
 Extraction and cleaning are separate modules but run in one application:
 
 ```text
-Alpaca / Moomoo OpenD / Binance
+Alpaca raw + adjusted / Moomoo OpenD / Binance
       -> source-specific extraction
       -> common standardization
       -> structural validation
@@ -47,12 +48,17 @@ Five minutes is the source resolution. It preserves enough detail to construct
 15-minute, 30-minute, hourly, or two-hour bars later without committing the
 strategy to one aggregation schedule now.
 
+For Alpaca instruments, ingestion requests each timestamp range twice. The
+`raw` response supplies executable OHLCV values, while the `all` corporate-action
+adjustment response supplies `adjusted_close`. Raw and adjusted timestamps must
+match exactly or ingestion stops instead of silently mixing observations.
+
 ## Project layout
 
 ```text
 src/market_data/
   config.py              Instrument metadata and ingestion settings
-  extractors/alpaca.py   SPY REST extraction and pagination
+  extractors/alpaca.py   SPY/TLT raw/adjusted REST extraction and pagination
   extractors/moomoo.py   SG.ES3 OpenD extraction and pagination
   extractors/binance.py  BTCUSDT extraction and pagination
   extractors/yahoo.py    Selectable Yahoo fallback extraction
@@ -71,7 +77,7 @@ test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
 run_aggregation.py       Separate 30m aggregation entry point
 run_backfill.py          Separate non-destructive backfill entry point
-run_consolidation.py     Canonical three-asset CSV entry point
+run_consolidation.py     Canonical four-asset CSV entry point
 run_market_data_pipeline.py  One-command sequential workflow entry point
 ```
 
@@ -132,7 +138,7 @@ python run_market_data_pipeline.py --help
 | Argument | Meaning |
 |---|---|
 | `--provider NAME` | Select `alpaca`, `binance`, `yahoo`, or `moomoo`; canonical provider names also work |
-| `--symbol SYMBOL` | Select `SPY`, `BTCUSDT`, `ES3.SI`, or `SG.ES3` |
+| `--symbol SYMBOL` | Select `SPY`, `TLT`, `BTCUSDT`, `ES3.SI`, or `SG.ES3` |
 | `--list-instruments` | List every configured provider-symbol pair and exit |
 | `--start TIMESTAMP` | Inclusive UTC start |
 | `--end TIMESTAMP` | Exclusive UTC end |
@@ -157,10 +163,10 @@ data is unavailable.
 
 | Argument | Meaning |
 |---|---|
-| Repeated `--input-dir PATH` | Replace the three default selected-source directories |
+| Repeated `--input-dir PATH` | Replace the four default selected-source directories |
 | `--output-file PATH` | Canonical CSV; default `data/canonical/market_bars_30m.csv` |
 | `--summary-file PATH` | JSON summary; default `data/canonical/consolidation_summary.json` |
-| `--allow-partial` | Permit consolidation when fewer than all three instruments are supplied |
+| `--allow-partial` | Permit consolidation when fewer than all four instruments are supplied |
 
 ### Orchestrator option
 
@@ -176,6 +182,7 @@ also test standardization, validation, and CSV writing:
 ```bash
 python run_ingestion.py --list-instruments
 python run_ingestion.py --provider alpaca --symbol SPY --lookback-days 7
+python run_ingestion.py --provider alpaca --symbol TLT --lookback-days 7
 python run_ingestion.py --provider binance --symbol BTCUSDT --lookback-days 2
 python run_ingestion.py --provider yahoo --symbol ES3.SI --lookback-days 7
 ```
@@ -258,6 +265,8 @@ DATA_END="2026-09-02T00:00:00Z"
 
 python run_ingestion.py --provider alpaca --symbol SPY \
   --start "$DATA_START" --end "$DATA_END"
+python run_ingestion.py --provider alpaca --symbol TLT \
+  --start "$DATA_START" --end "$DATA_END"
 python run_ingestion.py --provider binance --symbol BTCUSDT \
   --start "$DATA_START" --end "$DATA_END"
 python run_ingestion.py --provider yahoo --symbol ES3.SI \
@@ -269,6 +278,8 @@ Aggregate each staging directory independently:
 ```bash
 python run_aggregation.py --input-dir data/staging/alpaca_market_data/SPY \
   --output-dir data/staging/alpaca_market_data/SPY
+python run_aggregation.py --input-dir data/staging/alpaca_market_data/TLT \
+  --output-dir data/staging/alpaca_market_data/TLT
 python run_aggregation.py --input-dir data/staging/binance_spot/BTCUSDT \
   --output-dir data/staging/binance_spot/BTCUSDT
 python run_aggregation.py --input-dir data/staging/yahoo_finance/ES3_SI \
@@ -280,32 +291,35 @@ Apply backfill independently so no provider can fill another provider's bars:
 ```bash
 python run_backfill.py --input-dir data/staging/alpaca_market_data/SPY \
   --output-dir data/staging/alpaca_market_data/SPY
+python run_backfill.py --input-dir data/staging/alpaca_market_data/TLT \
+  --output-dir data/staging/alpaca_market_data/TLT
 python run_backfill.py --input-dir data/staging/binance_spot/BTCUSDT \
   --output-dir data/staging/binance_spot/BTCUSDT
 python run_backfill.py --input-dir data/staging/yahoo_finance/ES3_SI \
   --output-dir data/staging/yahoo_finance/ES3_SI
 ```
 
-Finally, consolidate the three selected sources:
+Finally, consolidate the four selected sources:
 
 ```bash
 python run_consolidation.py
 ```
 
-The default consolidation selects Alpaca SPY, Binance BTCUSDT, and Yahoo
-ES3.SI. To replace ES3 with another provider later, pass all selected directories
-explicitly:
+The default consolidation selects Alpaca SPY and TLT, Binance BTCUSDT, and
+Yahoo ES3.SI. To replace ES3 with another provider later, pass all selected
+directories explicitly:
 
 ```bash
 python run_consolidation.py \
   --input-dir data/staging/alpaca_market_data/SPY \
+  --input-dir data/staging/alpaca_market_data/TLT \
   --input-dir data/staging/binance_spot/BTCUSDT \
   --input-dir path/to/the/replacement/es3/directory
 ```
 
 Consolidation rejects duplicate bar keys and rejects more than one provider for
 the same `instrument_id`. It unions the rows in long format and does not create
-artificial observations while SPY or ES3 is closed.
+artificial observations while SPY, TLT, or ES3 is closed.
 
 ## Outputs
 
@@ -324,6 +338,11 @@ files inside its selected staging run directory:
 but unusual rows remain present with `quality_status=warning` and an explanation
 in `quality_flags`.
 
+For Alpaca rows, raw OHLCV and adjusted close are joined by UTC bar timestamp.
+The adjustment affects analysis only: raw prices remain available for orders and
+position valuation. No separate dividend cash-flow file is created in this data
+phase, so adjusted-return analysis must not add dividends again.
+
 `rejected_market_bars_5m.csv` retains invalid, duplicate, or incomplete rows and
 records the reason. It also retains a provider row if its timestamp falls
 outside the instrument's expected regular session.
@@ -338,7 +357,9 @@ holiday/scheduled closure, or continuous 24/7 trading. It also reports expected,
 accepted, and missing bars plus the coverage ratio.
 
 `ingestion_summary.json` provides compact counts and coverage statistics for
-each instrument.
+each instrument. Its `price_policy` records that OHLCV is raw, Alpaca adjusted
+close uses all supported corporate-action adjustments, and dividend cash flows
+are not tracked by this phase.
 
 The separate aggregation run replaces three additional files:
 
@@ -390,8 +411,8 @@ data/canonical/consolidation_summary.json
 `market_bars_30m.csv` is the long-format union of the selected primary source
 for each instrument. It retains `source`, `bar_origin`, backfill provenance, and
 quality columns. Rows are not aligned into a wide matrix at this stage because
-the three assets have different trading sessions. The summary records row
-counts, date coverage, source symbols, and bar origins for each instrument.
+the four assets do not all share the same trading session. The summary records
+row counts, date coverage, source symbols, and bar origins for each instrument.
 
 ## Backfill rules
 
@@ -406,7 +427,9 @@ A 30-minute window contains six expected five-minute bars, labelled `t0` to
   in the same trading session.
 - If `t5` is missing, close uses the immediately following accepted five-minute
   bar's open. It must start exactly at the 30-minute window close and, for
-  equities, be in the same trading session.
+  equities, be in the same trading session. Its adjusted close is calculated by
+  applying that following bar's adjusted-to-raw price factor to the borrowed raw
+  open.
 - If both boundaries are missing, both adjacent observations must be available.
   A boundary value is never borrowed across an overnight close, weekend,
   holiday, or the SGX lunch break. BTCUSDT is continuous and may cross a UTC
@@ -433,7 +456,7 @@ silently.
 | `bar_close_time_utc` | Exclusive bar end in UTC |
 | `session_date_local` | Date in the instrument's local session timezone |
 | `open`, `high`, `low`, `close` | Unadjusted source OHLC prices |
-| `adjusted_close` | Equals raw close in the active unadjusted-source requests |
+| `adjusted_close` | Corporate-action-adjusted analytical close for Alpaca and Yahoo when supplied; equals raw close for BTC and unadjusted sources |
 | `volume` | Source-native base volume |
 | `volume_unit` | `shares`, `units`, or `BTC` |
 | `quote_volume` | Moomoo SGD turnover or Binance USDT turnover; blank for Alpaca |
@@ -444,8 +467,14 @@ silently.
 | `quality_status` | `pass` or `warning` for accepted rows |
 | `quality_flags` | Semicolon-separated warning explanations |
 
-The same schema does not make volume directly comparable. SPY volume is shares,
-SG.ES3 volume is ETF units, and BTCUSDT volume is bitcoin.
+The same schema does not make volume directly comparable. SPY and TLT volume is
+shares, SG.ES3 volume is ETF units, and BTCUSDT volume is bitcoin.
+
+Use `adjusted_close` for historical returns, volatility, momentum, RSI, and
+other close-based model features. Use raw `open`/`close` for simulated or live
+fills and raw `close` for actual position market value. An adjusted-return
+portfolio is a total-return index; it is not a cash-and-share ledger and does
+not expose dividends as spendable cash.
 
 ## Validation rules
 
@@ -461,11 +490,11 @@ Rows are rejected when they contain:
 
 Zero volume and an intrabar range above 20% are retained as warnings.
 
-The session check uses the `XNYS` calendar for SPY, `XSES` for SG.ES3, and a
-continuous UTC calendar for BTCUSDT. Regular session hours, exchange breaks,
-weekends, holidays, and early closes determine which bars should exist. A
-weekend or holiday produces no rejected bars because no market data was
-expected. A missing bar during an open session is written to
+The session check uses the `XNYS` US-equity calendar for SPY and TLT, `XSES`
+for SG.ES3, and a continuous UTC calendar for BTCUSDT. Regular session hours,
+exchange breaks, weekends, holidays, and early closes determine which bars
+should exist. A weekend or holiday produces no rejected bars because no market
+data was expected. A missing bar during an open session is written to
 `missing_market_bars_5m.csv` instead.
 
 The SGX regular-session break from 12:00 to 13:00 Singapore time is configured
