@@ -4,3 +4,5 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+visualization/data/*.csv
+visualization/data/*.json
