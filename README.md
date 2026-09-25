@@ -9,9 +9,9 @@ for:
 - `BTCUSDT` from Binance Spot
 
 It also provides separate steps that derive 30-minute OHLCV bars and apply a
-small set of conservative backfill methods. It intentionally does not calculate
-indicators, generate signals, write to PostgreSQL, or simulate trades. Those
-belong in later modules.
+small set of conservative backfill methods. A separate strategy package now
+generates momentum and mean-reversion signals. Execution, portfolio accounting,
+experiment orchestration, PostgreSQL, and trade simulation remain later phases.
 
 ## Design
 
@@ -42,6 +42,11 @@ Configuration-driven orchestrator
       -> waits for all aggregations
       -> waits for all backfills
       -> runs consolidation last
+
+Canonical 30m bars
+      -> adjusted-close strategy features
+      -> momentum or mean-reversion signal
+      -> target long/cash position
 ```
 
 Five minutes is the source resolution. It preserves enough detail to construct
@@ -71,6 +76,10 @@ src/market_data/
   backfill.py            Conservative 30m gap handling and provenance
   consolidation.py       Selected-source canonical long-format construction
   orchestration.py       Strict sequential workflow orchestration
+src/trading_strategy/
+  common.py              Shared strategy input checks and signal eligibility
+  momentum.py            Long/cash EMA and trailing-return momentum rule
+  mean_reversion.py      Long/cash rolling z-score mean-reversion rule
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
 test/                    Offline tests using synthetic data
@@ -79,6 +88,62 @@ run_aggregation.py       Separate 30m aggregation entry point
 run_backfill.py          Separate non-destructive backfill entry point
 run_consolidation.py     Canonical four-asset CSV entry point
 run_market_data_pipeline.py  One-command sequential workflow entry point
+```
+
+## Strategy modules
+
+The strategy package accepts canonical long-format bars and processes every
+`instrument_id` independently. It uses `adjusted_close` for features and returns
+signals only; it does not execute orders or calculate portfolio P&L.
+
+Both strategies use the same output conventions:
+
+| Column | Meaning |
+|---|---|
+| `strategy_name` | `momentum` or `mean_reversion` |
+| `signal` | `BUY`, `SELL`, or `HOLD` |
+| `target_position` | `1` for long and `0` for cash |
+| `signal_strength` | Trailing return for momentum or negative z-score for mean reversion |
+| `signal_reason` | Rule or data-quality reason behind the signal |
+| `signal_eligible` | Whether the strategy may change position on that bar |
+
+Signals may change only on final, complete aggregated bars. Approved backfilled
+bars remain in the feature history for continuity, but a strategy does not enter
+or exit on them. A later execution module must delay a signal and use a raw,
+tradable price such as the next bar's `open`.
+
+Example usage:
+
+```python
+import pandas as pd
+
+from trading_strategy import (
+    MeanReversionParameters,
+    MomentumParameters,
+    generate_mean_reversion_signals,
+    generate_momentum_signals,
+)
+
+bars = pd.read_csv("data/canonical/market_bars_30m.csv")
+
+momentum = generate_momentum_signals(
+    bars,
+    MomentumParameters(
+        fast_window=13,
+        slow_window=52,
+        momentum_lookback=26,
+    ),
+)
+
+mean_reversion = generate_mean_reversion_signals(
+    bars,
+    MeanReversionParameters(
+        window=26,
+        entry_z_score=-1.5,
+        exit_z_score=0.0,
+        maximum_holding_bars=52,
+    ),
+)
 ```
 
 ## Setup
