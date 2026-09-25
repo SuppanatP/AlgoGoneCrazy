@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 visualization/data/*.csv
 visualization/data/*.json
+model/data/*.csv
