@@ -1,0 +1,103 @@
+{
+  "as_of": "2026-09-18",
+  "derived_from": "FE5209 project doc: data_costs_reference.md / data_costs_reference.docx",
+  "assets": {
+    "STI_ETF": {
+      "broker": "IBKR",
+      "commission_pct": 0.0008,
+      "commission_min": {
+        "amount": 2.5,
+        "currency": "SGD"
+      },
+      "notes": "0.08% of trade value. Add SGX clearing/trading fees + 9% GST on eligible components (small, not modeled separately)."
+    },
+    "SP500_ETF": {
+      "broker": "IBKR",
+      "pricing_plan": "pro_tiered",
+      "commission_pct": null,
+      "commission_min": {
+        "amount": 0.35,
+        "currency": "USD"
+      },
+      "notes": "DECISION (fund/investor-pitch framing, updated 2026-09-18): use IBKR Pro Tiered (USD 0.0035/share, min USD 0.35/order, capped at 1% of trade value; rate steps down at >300,000 shares/month). IBKR Lite ($0 flat) was the prior assumption under an individual-student-account framing, but Lite eligibility is restricted to Singapore retail investors holding individual/joint/trust accounts with retail-style trading behavior -- it does not extend to an account structured to pitch/manage money for outside investors (a fund vehicle would need an entity/advisor account, which is Pro pricing or better, never Lite). Pro Tiered is used rather than Pro Fixed because Tiered is strictly cheaper than Fixed at every order size (lower per-share rate, lower minimum). Lite is kept below under 'lite' for reference / as the individual-account alternative.",
+      "lite": {
+        "commission_pct": 0.0,
+        "commission_min": null,
+        "notes": "Reference only, not used: valid if this were framed as an individual retail account rather than a fund pitched to investors."
+      },
+      "commission_per_share": 0.0035,
+      "tier_note": "USD 0.0035/share for <=300,000 shares/month; steps down to 0.0020/0.0015/0.0010/0.0005 per share at higher monthly volume tiers",
+      "cap_pct_of_trade_value": 0.01,
+      "pro_fixed": {
+        "commission_per_share": 0.005,
+        "commission_min": {
+          "amount": 1.0,
+          "currency": "USD"
+        },
+        "cap_pct_of_trade_value": 0.01
+      }
+    },
+    "BTC": {
+      "broker": "Binance",
+      "commission_pct": 0.001,
+      "commission_pct_with_bnb_discount": 0.00075,
+      "commission_min": null,
+      "notes": "DECISION: use Binance standard rate (0.10%), no BNB discount assumed. commission_pct_with_bnb_discount kept below for reference only -- not the default."
+    },
+    "TLT": {
+      "broker": "IBKR",
+      "pricing_plan": "pro_tiered",
+      "commission_pct": null,
+      "commission_min": {
+        "amount": 0.35,
+        "currency": "USD"
+      },
+      "notes": "DECISION (fund/investor-pitch framing, updated 2026-09-18): use IBKR Pro Tiered (USD 0.0035/share, min USD 0.35/order, capped at 1% of trade value; rate steps down at >300,000 shares/month). IBKR Lite ($0 flat) was the prior assumption under an individual-student-account framing, but Lite eligibility is restricted to Singapore retail investors holding individual/joint/trust accounts with retail-style trading behavior -- it does not extend to an account structured to pitch/manage money for outside investors (a fund vehicle would need an entity/advisor account, which is Pro pricing or better, never Lite). Pro Tiered is used rather than Pro Fixed because Tiered is strictly cheaper than Fixed at every order size (lower per-share rate, lower minimum). Lite is kept below under 'lite' for reference / as the individual-account alternative.",
+      "lite": {
+        "commission_pct": 0.0,
+        "commission_min": null,
+        "notes": "Reference only, not used: valid if this were framed as an individual retail account rather than a fund pitched to investors."
+      },
+      "commission_per_share": 0.0035,
+      "tier_note": "USD 0.0035/share for <=300,000 shares/month; steps down to 0.0020/0.0015/0.0010/0.0005 per share at higher monthly volume tiers",
+      "cap_pct_of_trade_value": 0.01,
+      "pro_fixed": {
+        "commission_per_share": 0.005,
+        "commission_min": {
+          "amount": 1.0,
+          "currency": "USD"
+        },
+        "cap_pct_of_trade_value": 0.01
+      }
+    }
+  },
+  "fx_conversion": {
+    "pair": "USDSGD",
+    "broker": "IBKR IdealPro",
+    "applies_to": [
+      "STI_ETF"
+    ],
+    "fee_pct": 2e-05,
+    "fee_min": {
+      "amount": 2.0,
+      "currency": "USD"
+    },
+    "notes": "Only applies to the SGD<->USD leg (STI ETF). BTC on Binance settles in USDT/USD directly; SP500 ETF is already USD."
+  },
+  "sources": {
+    "ibkr_sgx_stocks": "https://www.interactivebrokers.com.sg/en/pricing/commissions-stocks.php",
+    "ibkr_sgx_fees": "https://www.interactivebrokers.com.sg/en/accounts/fees/SGX.php",
+    "ibkr_us_stocks": "https://www.interactivebrokers.com/en/pricing/commissions-stocks.php",
+    "ibkr_fx_spot": "https://www.interactivebrokers.com/en/pricing/commissions-spot-currencies.php",
+    "binance_fees": "https://www.binance.com/en/fee/trading",
+    "ibkr_sg_us_stocks": "https://www.interactivebrokers.com.sg/en/pricing/commissions-stocks.php"
+  },
+  "decision": {
+    "note": "Finalized methodology for the backtest simulation -- no more plan/discount ambiguity.",
+    "SP500_ETF_and_TLT_plan": "IBKR Pro Tiered (USD 0.0035/share, min USD 0.35/order, capped at 1% of trade value) -- switched from IBKR Lite because Lite is retail-individual/joint/trust-account-only and doesn't fit a fund-pitching-to-investors framing; a real fund would face Pro-tier (or institutional) pricing, not a $0 retail rate. Pro Tiered chosen over Pro Fixed since Tiered dominates Fixed at every order size.",
+    "BTC_plan": "Binance standard rate, no BNB discount assumed (0.10%, not 0.075%)",
+    "position_sizing": "Fixed capital allocation per instrument, fully invested when signal is long/flat: shares = floor(allocated_capital / price) for SPY/TLT/STI (whole shares); BTC uses fractional units (allocated_capital / price).",
+    "framing": "Project is pitched as a fund offering to outside investors, not an individual student trading account.",
+    "interest_and_funding": "Assumed zero for all legs (SGD, USD, BTC): no interest on idle cash, no margin/borrow cost, no funding payments. Not modeled in the backtest."
+  }
+}
