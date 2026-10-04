@@ -37,7 +37,7 @@ RESULTS_DIR = ROOT / "results"
 INITIAL_CASH = 100_000.0
 LEVERAGE = 1.0
 FEE_BPS = 10.0                      # commission: 10 bps = 0.10% of notional per order
-SLIPPAGE_BPS = 2.0                  # half spread + market impact, per order
+SLIPPAGE_BPS = 0.0                 # half spread + market impact, per order
 MIN_FEE = 0.0                       # minimum commission per order
 COST_OVERRIDES = {}                 # e.g. {"SOL": {"slippage_bps": 5.0}}
 
