@@ -10,9 +10,42 @@ import pandas as pd
 from .tracker import CostModel, Portfolio
 
 
+def _fit_long_target_to_cash(
+    pf: Portfolio,
+    asset: str,
+    target_qty: float,
+    price: float,
+    quantity_step: Optional[float],
+) -> float:
+    """Reduce a long target enough to pay execution costs without borrowing."""
+    current_qty = pf.position(asset)
+    if target_qty <= current_qty or target_qty <= 0:
+        return target_qty
+
+    candidate = target_qty
+    for _ in range(10):
+        order_qty = candidate - current_qty
+        if order_qty <= 0:
+            return current_qty
+        execution_price, fee, _ = pf.costs.apply(asset, order_qty, price)
+        required_cash = order_qty * execution_price + fee
+        if required_cash <= pf.cash + 1e-9:
+            return candidate
+
+        affordable_order = max((pf.cash - fee) / execution_price, 0.0)
+        candidate = current_qty + affordable_order
+        if quantity_step is not None:
+            candidate = (
+                np.floor(candidate / quantity_step) * quantity_step
+            )
+    return max(candidate, current_qty)
+
+
 def execute_bar(pf: Portfolio, ts, targets: dict, prev_targets: dict, opens: dict,
                 closes: dict, weights: dict, leverage: float = 1.0,
-                close_at_end: bool = False) -> list:
+                close_at_end: bool = False,
+                quantity_steps: Optional[dict[str, float]] = None,
+                enforce_cash_limit: bool = False) -> list:
     """One 30-min bar for all assets.
 
     targets / opens / closes contain only the assets that have a bar at `ts`.
@@ -28,6 +61,13 @@ def execute_bar(pf: Portfolio, ts, targets: dict, prev_targets: dict, opens: dic
         eq = pf.equity(opens)
         for a, t in changed.items():
             qty = t * weights[a] * leverage * eq / opens[a]
+            step = (quantity_steps or {}).get(a)
+            if step is not None:
+                if step <= 0:
+                    raise ValueError("quantity steps must be positive")
+                qty = np.sign(qty) * np.floor(abs(qty) / step) * step
+            if enforce_cash_limit:
+                qty = _fit_long_target_to_cash(pf, a, qty, opens[a], step)
             fill = pf.target_position(ts, a, qty, opens[a])
             if fill is not None:
                 fills.append(fill)
@@ -50,7 +90,9 @@ class BacktestResult:
 def run_portfolio_backtest(positions: pd.DataFrame, bars: dict, weights: Optional[dict] = None,
                            initial_cash: float = 100_000.0, fee_bps: float = 10.0,
                            slippage_bps: float = 0.0, cost_model: Optional[CostModel] = None,
-                           leverage: float = 1.0) -> BacktestResult:
+                           leverage: float = 1.0,
+                           quantity_steps: Optional[dict[str, float]] = None,
+                           enforce_cash_limit: bool = False) -> BacktestResult:
     """positions: DataFrame (time x asset) of -1/0/+1; bars: {asset: DataFrame with open, close}.
 
     weights default to equal (1 / number of assets). Open positions are closed at the end.
@@ -69,11 +111,16 @@ def run_portfolio_backtest(positions: pd.DataFrame, bars: dict, weights: Optiona
     last = len(index) - 1
     for i, ts in enumerate(index):
         have = [j for j in range(len(assets)) if not np.isnan(opens[i, j])]
-        targets = {assets[j]: (prev[assets[j]] if np.isnan(pos[i, j]) else pos[i, j]) for j in have}
+        targets = {
+            assets[j]: (prev[assets[j]] if np.isnan(pos[i, j]) else pos[i, j])
+            for j in have
+        }
         execute_bar(pf, ts, targets, prev,
                     {assets[j]: opens[i, j] for j in have},
                     {assets[j]: closes[i, j] for j in have},
-                    weights, leverage, close_at_end=(i == last))
+                    weights, leverage, close_at_end=(i == last),
+                    quantity_steps=quantity_steps,
+                    enforce_cash_limit=enforce_cash_limit)
         prev.update(targets)
 
     curve = pf.equity_curve

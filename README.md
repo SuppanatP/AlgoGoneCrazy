@@ -9,9 +9,10 @@ for:
 - `BTCUSDT` from Binance Spot
 
 It also provides separate steps that derive 30-minute OHLCV bars and apply a
-small set of conservative backfill methods. A separate strategy package now
-generates momentum and mean-reversion signals. Execution, portfolio accounting,
-experiment orchestration, PostgreSQL, and trade simulation remain later phases.
+small set of conservative backfill methods. A separate strategy package
+generates momentum and mean-reversion signals, and a historical backtesting
+entry point connects those signals to the shared trade tracker. Live execution,
+parameter-search experiments, and PostgreSQL remain later phases.
 
 ## Design
 
@@ -47,6 +48,9 @@ Canonical 30m bars
       -> adjusted-close strategy features
       -> momentum or mean-reversion signal
       -> target long/cash position
+      -> delay until the next complete real bar
+      -> raw-open simulated execution
+      -> trades, equity curve, costs, and comparison metrics
 ```
 
 Five minutes is the source resolution. It preserves enough detail to construct
@@ -80,6 +84,10 @@ src/trading_strategy/
   common.py              Shared strategy input checks and signal eligibility
   momentum.py            Long/cash EMA and trailing-return momentum rule
   mean_reversion.py      Long/cash rolling z-score mean-reversion rule
+src/strategy_backtest.py Strategy-to-backtester adapter and output writer
+src/backtest.py          Reused bar-by-bar backtest engine
+src/tracker.py           Reused cash, position, fill, trade, and cost ledger
+src/metrics.py           Reused performance and transaction-cost metrics
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
 test/                    Offline tests using synthetic data
@@ -88,6 +96,7 @@ run_aggregation.py       Separate 30m aggregation entry point
 run_backfill.py          Separate non-destructive backfill entry point
 run_consolidation.py     Canonical four-asset CSV entry point
 run_market_data_pipeline.py  One-command sequential workflow entry point
+run_strategy_backtest.py SPY/ES3 momentum and mean-reversion backtest entry point
 ```
 
 ## Strategy modules
@@ -146,6 +155,52 @@ mean_reversion = generate_mean_reversion_signals(
 )
 ```
 
+## Strategy backtesting
+
+The strategy backtest runs SPY and ES3.SI independently so USD and SGD are not
+mixed. Indicators use `adjusted_close`; a target produced after one bar closes
+is delayed and executed at the next complete real bar's raw `open`. Positions
+are valued using raw `close`. Backfilled bars preserve indicator continuity but
+cannot trigger an execution. Any remaining position is force-closed using the
+final complete real bar's raw `close` so each run ends with realized P&L.
+
+By default, the runner executes momentum, mean reversion, and buy-and-hold for
+both instruments using `config/cost_assumptions.json`. SPY and ES3 positions are
+rounded to whole units. Slippage defaults to zero and can be supplied explicitly.
+
+```bash
+python run_strategy_backtest.py
+```
+
+Run one combination or select a historical range:
+
+```bash
+python run_strategy_backtest.py \
+  --instrument SPY \
+  --strategy momentum \
+  --start 2024-01-01 \
+  --end 2025-01-01 \
+  --slippage-bps 2
+```
+
+Use a different canonical CSV or override project commissions with a flat fee:
+
+```bash
+python run_strategy_backtest.py \
+  --input-file data/canonical/market_bars_30m.csv \
+  --flat-fee-bps 10 \
+  --output-dir results/strategy_backtests
+```
+
+The default output directory contains `summary.csv` and separate signal,
+position, fill, trade, and equity CSVs for each run. `parameters.json` records
+the parameters and execution assumptions. `summary.csv` is the first file to
+use for comparing the four strategy/instrument combinations.
+
+This is a historical simulation, not realized trading. The current raw-price
+ledger does not add separate dividend cash flows, so dividend-paying assets and
+their buy-and-hold benchmarks are compared consistently on a price-return basis.
+
 ## Setup
 
 From the repository root:
@@ -196,6 +251,7 @@ python run_aggregation.py --help
 python run_backfill.py --help
 python run_consolidation.py --help
 python run_market_data_pipeline.py --help
+python run_strategy_backtest.py --help
 ```
 
 ### Ingestion options
