@@ -97,6 +97,7 @@ run_backfill.py          Separate non-destructive backfill entry point
 run_consolidation.py     Canonical four-asset CSV entry point
 run_market_data_pipeline.py  One-command sequential workflow entry point
 run_strategy_backtest.py SPY/ES3 momentum and mean-reversion backtest entry point
+run_parameter_experiments.py Pre-test parameter comparison entry point
 ```
 
 ## Strategy modules
@@ -201,6 +202,21 @@ This is a historical simulation, not realized trading. The current raw-price
 ledger does not add separate dividend cash flows, so dividend-paying assets and
 their buy-and-hold benchmarks are compared consistently on a price-return basis.
 
+### Pre-test parameter comparison
+
+The parameter experiment uses only bars before 1 October 2026. It compares
+three momentum and three mean-reversion configurations over chronological
+development and validation periods. October and later data remain excluded for
+the official test period.
+
+```bash
+python run_parameter_experiments.py
+```
+
+The default outputs are `results/parameter_experiments/parameter_comparison.csv`
+and `experiment_manifest.json`. The manifest records the cutoff, periods, costs,
+and every parameter set so the comparison can be reproduced.
+
 ## Setup
 
 From the repository root:
@@ -252,6 +268,7 @@ python run_backfill.py --help
 python run_consolidation.py --help
 python run_market_data_pipeline.py --help
 python run_strategy_backtest.py --help
+python run_parameter_experiments.py --help
 ```
 
 ### Ingestion options
