@@ -5,5 +5,15 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-*.csv
-*.json
+
+# Raw, standardized, aggregated, backfilled, and canonical market data.
+/data/*
+!/data/.gitignore
+
+# Generated backtest, experiment, chart, portfolio, and trade outputs.
+/results/
+/records/
+
+# Locally trained model artifacts and generated reports.
+/models/
+/docs/

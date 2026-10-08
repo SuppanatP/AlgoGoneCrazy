@@ -11,8 +11,9 @@ for:
 It also provides separate steps that derive 30-minute OHLCV bars and apply a
 small set of conservative backfill methods. A separate strategy package
 generates momentum and mean-reversion signals, and a historical backtesting
-entry point connects those signals to the shared trade tracker. Live execution,
-parameter-search experiments, and PostgreSQL remain later phases.
+entry point connects those signals to the shared trade tracker. A pre-test
+parameter-comparison workflow is also available. Automated parameter
+optimisation, live execution, and PostgreSQL remain later phases.
 
 ## Design
 
