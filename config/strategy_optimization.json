@@ -1,0 +1,95 @@
+{
+  "official_test_start_utc": "2026-10-01T00:00:00Z",
+  "score_weights": {
+    "sharpe_stability_penalty": 0.5,
+    "drawdown_penalty": 2.0
+  },
+  "assets": {
+    "spy_usd": {
+      "strategy": "momentum",
+      "development_period": {
+        "start": "2023-09-18T00:00:00Z",
+        "end": "2025-10-01T00:00:00Z"
+      },
+      "development_folds": [
+        {
+          "fold_id": "spy_dev_1",
+          "start": "2023-09-18T00:00:00Z",
+          "end": "2024-04-01T00:00:00Z"
+        },
+        {
+          "fold_id": "spy_dev_2",
+          "start": "2024-04-01T00:00:00Z",
+          "end": "2024-10-01T00:00:00Z"
+        },
+        {
+          "fold_id": "spy_dev_3",
+          "start": "2024-10-01T00:00:00Z",
+          "end": "2025-04-01T00:00:00Z"
+        },
+        {
+          "fold_id": "spy_dev_4",
+          "start": "2025-04-01T00:00:00Z",
+          "end": "2025-10-01T00:00:00Z"
+        }
+      ],
+      "validation_period": {
+        "start": "2025-10-01T00:00:00Z",
+        "end": "2026-10-01T00:00:00Z"
+      },
+      "search_space": {
+        "fast_window": [8, 13, 26],
+        "slow_window": [26, 52, 104],
+        "momentum_lookback": [13, 26, 52],
+        "entry_threshold": [0.0, 0.0025, 0.005],
+        "exit_threshold": [-0.0025, 0.0]
+      },
+      "selection_constraints": {
+        "minimum_total_trades": 20,
+        "minimum_trades_per_fold": 1,
+        "maximum_absolute_drawdown": 0.25,
+        "require_positive_median_return": false
+      }
+    },
+    "sti_es3_sgd": {
+      "strategy": "mean_reversion",
+      "development_period": {
+        "start": "2026-07-21T00:00:00Z",
+        "end": "2026-09-01T00:00:00Z"
+      },
+      "development_folds": [
+        {
+          "fold_id": "sti_dev_1",
+          "start": "2026-07-21T00:00:00Z",
+          "end": "2026-08-04T00:00:00Z"
+        },
+        {
+          "fold_id": "sti_dev_2",
+          "start": "2026-08-04T00:00:00Z",
+          "end": "2026-08-18T00:00:00Z"
+        },
+        {
+          "fold_id": "sti_dev_3",
+          "start": "2026-08-18T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        }
+      ],
+      "validation_period": {
+        "start": "2026-09-01T00:00:00Z",
+        "end": "2026-10-01T00:00:00Z"
+      },
+      "search_space": {
+        "window": [20, 26, 52],
+        "entry_z_score": [-1.25, -1.5, -2.0],
+        "exit_z_score": [-0.25, 0.0],
+        "maximum_holding_bars": [26, 52, 104]
+      },
+      "selection_constraints": {
+        "minimum_total_trades": 5,
+        "minimum_trades_per_fold": 1,
+        "maximum_absolute_drawdown": 0.1,
+        "require_positive_median_return": false
+      }
+    }
+  }
+}
