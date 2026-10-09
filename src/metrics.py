@@ -39,7 +39,9 @@ def drawdown_episodes(equity: pd.Series, min_depth: float = 0.0) -> pd.DataFrame
         rows.append((start, trough_ts, pd.NaT, trough, False))
     eps = pd.DataFrame(rows, columns=["start", "trough", "end", "depth", "recovered"])
     if len(eps):
-        eps["duration"] = eps["end"].fillna(equity.index[-1]) - eps["start"]
+        end_times = pd.to_datetime(eps["end"], utc=True)
+        start_times = pd.to_datetime(eps["start"], utc=True)
+        eps["duration"] = end_times.fillna(equity.index[-1]) - start_times
     return eps[eps["depth"] <= -min_depth].reset_index(drop=True)
 
 
