@@ -28,10 +28,12 @@ from src.backtest import execute_bar
 from src.data_source import fetch_bars
 from src.features import build_features
 from src.records import append_csv, load_state, save_state
-from src.strategy import HoldStrategy
+from src.strategy import RegimeStrategy
 from src.tracker import CostModel, Portfolio
 
-STRATEGY_KEYS = ("th_up", "th_down", "min_edge", "horizon", "allow_short")
+STRATEGY_KEYS = ("vol_high", "vol_low", "mom_rsi", "mr_rsi", "mr_bb", "horizon", "allow_short")
+# technical indicators (from build_features, data through t-1) passed to the strategy each bar
+INDICATOR_COLS = ("rsi_14", "close_over_sma_20", "close_over_sma_50", "bb_pctb_20", "bb_width_20")
 
 
 def cost_model_from(cfg) -> CostModel:
@@ -40,7 +42,8 @@ def cost_model_from(cfg) -> CostModel:
 
 
 def strategy_params(cfg, asset: str) -> dict:
-    defaults = {"th_up": cfg.TH_UP, "th_down": cfg.TH_DOWN, "min_edge": cfg.MIN_EDGE,
+    defaults = {"vol_high": cfg.VOL_HIGH, "vol_low": cfg.VOL_LOW, "mom_rsi": cfg.MOM_RSI,
+                "mr_rsi": cfg.MR_RSI, "mr_bb": cfg.MR_BB,
                 "horizon": cfg.HORIZON, "allow_short": cfg.ALLOW_SHORT}
     return {k: cfg.ASSETS[asset].get(k, v) for k, v in defaults.items()}
 
@@ -63,7 +66,7 @@ class DailyRunner:
         state = load_state(cfg.RECORDS_DIR)
         if state is None:
             self.pf = Portfolio(cfg.INITIAL_CASH, cost_model=costs)
-            self.strategies = {a: HoldStrategy(**strategy_params(cfg, a)) for a in self.assets}
+            self.strategies = {a: RegimeStrategy(**strategy_params(cfg, a)) for a in self.assets}
             self.prev_targets = {a: 0.0 for a in self.assets}
             self.last_bar_time = {a: None for a in self.assets}
         else:
@@ -77,10 +80,10 @@ class DailyRunner:
             for a in self.assets:
                 saved = state["strategies"][a]
                 params = strategy_params(cfg, a)
-                changed = [k for k in STRATEGY_KEYS if saved[k] != params[k]]
+                changed = [k for k in STRATEGY_KEYS if saved.get(k) != params[k]]
                 if changed:
                     print(f"  warning: {a} strategy settings changed since last run: {changed}")
-                self.strategies[a] = HoldStrategy(**params, position=saved["position"],
+                self.strategies[a] = RegimeStrategy(**params, position=saved["position"],
                                                   bars_left=saved["bars_left"])
                 self.prev_targets[a] = float(state["prev_targets"][a])
                 t = state["last_bar_time"][a]
@@ -113,8 +116,16 @@ class DailyRunner:
         #     print(f"  warning: {asset}: {nan_rows} bars with NaN features (increase LOOKBACK_DAYS?)")
         # return (pd.Series(up.predict(X), index=X.index),
         #         pd.Series(down.predict(X), index=X.index))
+        feats = build_features(hist[asset], asset, hist)
+        cols = feats.columns
+        X = feats.loc[bars_today.index, cols]
+        nan_rows = int(X.isna().any(axis=1).sum())
+        if nan_rows:
+            print(f"  warning: {asset}: {nan_rows} bars with NaN features (increase LOOKBACK_DAYS?)")
+        # print(feats)
         return (pd.Series(np.random.rand(len(bars_today)), index=bars_today.index),
-                pd.Series(np.random.rand(len(bars_today)), index=bars_today.index))
+                pd.Series(np.random.rand(len(bars_today)), index=bars_today.index),
+                feats.loc[bars_today.index, list(INDICATOR_COLS)])
 
     def run_day(self, day) -> int:
         """Process every not-yet-processed bar of `day` (UTC). Returns bars processed."""
@@ -137,8 +148,8 @@ class DailyRunner:
             timeline = timeline.union(today[a].index)
         data = {}
         for a in active:
-            p_up, p_down = self._predict(a, hist, today[a])
-            df = today[a][["open", "close"]].assign(p_up=p_up, p_down=p_down)
+            p_up, p_down, ind = self._predict(a, hist, today[a])
+            df = today[a][["open", "close"]].assign(p_up=p_up, p_down=p_down).join(ind)
             data[a] = df.reindex(timeline)
 
         n_fills, n_trades, n_eq = len(self.pf._fills), len(self.pf._trades), len(self.pf._equity)
@@ -149,8 +160,10 @@ class DailyRunner:
                 row = data[a].loc[ts]
                 if np.isnan(row["open"]):
                     continue                      # no bar for this asset at ts
+                indicators = {k: float(row[k]) for k in INDICATOR_COLS}
                 signals[a], targets[a] = self.strategies[a].step(float(row["p_up"]),
-                                                                 float(row["p_down"]))
+                                                                 float(row["p_down"]),
+                                                                 indicators)
                 opens[a], closes[a] = float(row["open"]), float(row["close"])
             before = {a: self.pf.position(a) for a in targets}
             fills = execute_bar(self.pf, ts, targets, self.prev_targets, opens, closes,
@@ -164,7 +177,9 @@ class DailyRunner:
                           "sell" if after < before[a] - 1e-12 else "hold")
                 decisions.append({"timestamp": ts, "asset": a, "open": opens[a],
                                   "close": closes[a], "p_up": data[a].at[ts, "p_up"],
-                                  "p_down": data[a].at[ts, "p_down"], "signal": signals[a],
+                                  "p_down": data[a].at[ts, "p_down"],
+                                  **{k: data[a].at[ts, k] for k in INDICATOR_COLS},
+                                  "signal": signals[a],
                                   "target": targets[a], "action": action,
                                   "position_qty": after, "transaction_cost": cost.get(a, 0.0),
                                   "portfolio_equity": equity})

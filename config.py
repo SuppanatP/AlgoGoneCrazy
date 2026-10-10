@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent
 #   symbol       value in the CSV's "symbol" column, only if all assets share one CSV
 #   model_up/down  LightGBM models (point all three to the same files for a pooled model)
 #   weight       share of equity used per unit of signal (weights summing to 1 = no leverage)
-# Optional per-asset strategy overrides: th_up, th_down, min_edge, horizon, allow_short
+# Optional per-asset strategy overrides: vol_high, vol_low, mom_rsi, mr_rsi, mr_bb, horizon, allow_short
 ASSETS = {
     "BTC": {"csv": ROOT / "data" / "market_bars_30m_with_backfill.csv",
             "model_up": ROOT / "models" / "btc_up.txt",
@@ -42,8 +42,11 @@ MIN_FEE = 0.0                       # minimum commission per order
 COST_OVERRIDES = {}                 # e.g. {"SOL": {"slippage_bps": 5.0}}
 
 # --- strategy defaults (choose on the VALIDATION set) ------------------------------
-TH_UP = 0.15
-TH_DOWN = 0.15
-MIN_EDGE = 0.02
+# p_up + p_down is used as a volatility gauge (see src/strategy.py RegimeStrategy)
+VOL_HIGH = 0.40                     # vol >= this -> momentum regime
+VOL_LOW = 0.25                      # vol <= this -> mean-reversion regime (between: no entry)
+MOM_RSI = 55.0                      # momentum: long if RSI >= this, short if RSI <= 100 - this
+MR_RSI = 30.0                       # mean reversion: long if RSI <= this, short if RSI >= 100 - this
+MR_BB = 0.0                         # mean reversion: long if %B <= this, short if %B >= 1 - this
 HORIZON = 12                        # bars to hold after an entry signal
 ALLOW_SHORT = True
