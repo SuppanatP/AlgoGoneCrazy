@@ -12,8 +12,10 @@ It also provides separate steps that derive 30-minute OHLCV bars and apply a
 small set of conservative backfill methods. A separate strategy package
 generates momentum and mean-reversion signals, and a historical backtesting
 entry point connects those signals to the shared trade tracker. A pre-test
-parameter-comparison workflow and a development-only parameter optimiser are
-also available. Live execution and PostgreSQL remain later phases.
+parameter-comparison workflow and a training-only parameter optimiser are
+also available. A strategy-agnostic inverse-volatility layer can produce capped
+portfolio risk budgets before signals are applied. Live execution and
+PostgreSQL remain later phases.
 
 ## Design
 
@@ -58,6 +60,13 @@ Development-period canonical bars
       -> chronological fold backtests with the same execution and cost model
       -> reliability filters and robustness ranking
       -> locally saved selected parameters
+
+Canonical adjusted closes
+      -> one daily close per local market session
+      -> trailing annualized volatility known before each rebalance date
+      -> capped inverse-volatility risk budgets
+      -> multiply by each strategy's standardized target signal
+      -> inactive allocations remain cash
 ```
 
 Five minutes is the source resolution. It preserves enough detail to construct
@@ -95,13 +104,18 @@ src/strategy_optimizer/
   search_space.py        Valid, deterministic strategy parameter grids
   evaluation.py          Chronological fold evaluation through the backtester
   selection.py           Reliability filters, robust scoring, and ranking
+src/portfolio_sizing/
+  inverse_volatility.py  Daily volatility, capped allocation, weight schedules
+  fx.py                  Point-in-time conversion into the USD portfolio base
+  targets.py             Signal gating and base-currency target quantities
 src/strategy_backtest.py Strategy-to-backtester adapter and output writer
 src/backtest.py          Reused bar-by-bar backtest engine
 src/tracker.py           Reused cash, position, fill, trade, and cost ledger
 src/metrics.py           Reused performance and transaction-cost metrics
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
-  strategy_optimization.json Search spaces, development folds, and constraints
+  strategy_optimization.json Search spaces, training folds, and constraints
+  portfolio_sizing.json      Volatility policy, asset caps, and quantity steps
 test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
 run_aggregation.py       Separate 30m aggregation entry point
@@ -111,6 +125,7 @@ run_market_data_pipeline.py  One-command sequential workflow entry point
 run_strategy_backtest.py SPY/ES3 momentum and mean-reversion backtest entry point
 run_parameter_experiments.py Pre-test parameter comparison entry point
 run_strategy_optimizer.py Development-only strategy optimisation entry point
+run_portfolio_weights.py  Rolling inverse-volatility weight entry point
 ```
 
 ## Strategy modules
@@ -219,7 +234,7 @@ their buy-and-hold benchmarks are compared consistently on a price-return basis.
 
 The parameter experiment uses only bars before 1 October 2026. It compares
 three momentum and three mean-reversion configurations over chronological
-development and validation periods. October and later data remain excluded for
+training and validation periods. October and later data remain excluded for
 the official test period.
 
 ```bash
@@ -233,18 +248,18 @@ and every parameter set so the comparison can be reproduced.
 ### Strategy parameter optimisation
 
 The optimiser searches momentum parameters for SPY and mean-reversion
-parameters for ES3.SI. Every candidate is evaluated on chronological development
+parameters for ES3.SI. Every candidate is evaluated on chronological training
 folds using the existing next-bar execution, portfolio ledger, and project cost
 model. Validation observations never affect candidate ranking.
 
 All boundaries are UTC and use an inclusive start and exclusive end. The
-official test period starts at `2026-10-01T00:00:00Z`, so no development or
+official test period starts at `2026-10-01T00:00:00Z`, so no training or
 validation run includes an October 2026 observation.
 
-| Instrument | Development folds used for selection | Separate validation period |
+| Instrument | Training folds used for selection | Separate validation period |
 |---|---|---|
 | SPY | 18 Sep 2023–1 Apr 2024; 1 Apr–1 Oct 2024; 1 Oct 2024–1 Apr 2025; 1 Apr–1 Oct 2025 | 1 Oct 2025–1 Oct 2026 |
-| ES3.SI | 21 Jul–4 Aug 2026; 4–18 Aug 2026; 18 Aug–1 Sep 2026 | 1 Sep–1 Oct 2026 |
+| ES3.SI | 6–21 Jul 2026; 21 Jul–4 Aug 2026; 4–18 Aug 2026; 18 Aug–1 Sep 2026 | 1 Sep–1 Oct 2026 |
 
 The search is a deliberately small discrete grid rather than a continuous or
 every-integer search. Values represent materially different horizons while
@@ -255,13 +270,13 @@ keeping the results understandable and limiting overfitting.
 | SPY momentum | Fast EMA: 8, 13, 26 bars; slow EMA: 26, 52, 104 bars; return lookback: 13, 26, 52 bars; entry return: 0%, 0.25%, 0.50%; exit return: -0.25%, 0% | 144 |
 | ES3.SI mean reversion | Rolling window: 20, 26, 52 bars; entry z-score: -1.25, -1.50, -2.00; exit z-score: -0.25, 0; maximum holding period: 26, 52, 104 bars | 54 |
 
-This produces 738 fold backtests: `144 x 4` for SPY and `54 x 3` for ES3.SI.
-On the current project machine, the complete development search took about two
+This produces 792 fold backtests: `144 x 4` for SPY and `54 x 4` for ES3.SI.
+On the current project machine, the complete training search took about two
 minutes. Allow roughly two to five minutes depending on the computer and other
-workload. `--validate-selected` repeats the development search before adding the
+workload. `--validate-selected` repeats the training search before adding the
 two validation runs, so it takes approximately the same amount of time.
 
-Run the full development search:
+Run the full training search:
 
 ```bash
 python run_strategy_optimizer.py
@@ -273,7 +288,7 @@ Run a small connection and workflow check without completing the full grid:
 python run_strategy_optimizer.py --max-candidates 2
 ```
 
-After the development search has selected candidates, validation can be run
+After the training search has selected candidates, validation can be run
 explicitly. It is reported separately and is not fed back into the ranking:
 
 ```bash
@@ -283,15 +298,89 @@ python run_strategy_optimizer.py --validate-selected
 Generated files are written beneath `results/strategy_optimizer/` and are
 ignored by Git:
 
-- `fold_results.csv`: one row per candidate and development fold
+- `fold_results.csv`: one row per candidate and training fold
 - `candidate_ranking.csv`: reliability checks, aggregate metrics, and ranking
-- `selected_parameters.json`: the development-only winners
+- `selected_parameters.json`: the training-only winners
 - `validation_summary.csv`: optional untouched validation results
 - `optimization_manifest.json`: data, configuration, costs, and run settings
 
 If the group approves the winners, copy only the frozen parameter values into a
 tracked strategy configuration. Do not commit generated optimisation outputs or
 use official test-period observations to revise the parameters.
+
+### Portfolio sizing
+
+Portfolio sizing is separate from signal generation. Momentum, mean reversion,
+or another teammate's strategy supplies a standardized target signal: `1` for
+long and `0` for cash. The sizing layer supplies a maximum asset risk budget.
+The final target weight is `risk budget x signal`; when a signal is zero, its
+unused allocation remains cash and is not redistributed to active assets.
+
+The tracked defaults in `config/portfolio_sizing.json` use 60 daily return
+observations, permit a minimum of 40 while STI history remains short, rebalance
+weekly, reserve at least 5% cash, apply a 5% annualized volatility floor, and
+cap each asset. Every weight uses adjusted closing prices strictly before its
+rebalance date, so current or future closing prices cannot leak into the sizing
+decision.
+
+Build weights for every configured asset:
+
+```bash
+python run_portfolio_weights.py \
+  --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+Build an SPY/STI-only diagnostic schedule from the backtest snapshot:
+
+```bash
+python run_portfolio_weights.py \
+  --input-file data/canonical/market_bars_30m_training_validation.csv \
+  --instrument SPY ES3.SI \
+  --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+After refreshing the canonical file through 30 September 2026, build the
+initial official-period weights using information available before 1 October:
+
+```bash
+python run_portfolio_weights.py \
+  --start 2026-10-01 \
+  --end 2026-10-02 \
+  --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+Generated `inverse_volatility_weights.csv`, `volatility_diagnostics.csv`,
+`currency_conversion.csv`, and `portfolio_sizing_manifest.json` files are written beneath
+`results/portfolio_sizing/` and ignored by Git.
+
+USD is the portfolio base and final reporting currency. USD assets use a rate of
+1, USDT is treated as USD at a fixed 1:1 rate for this project, and SGD assets
+must use timestamped SGD-to-USD rates. Prices are converted before volatility
+and weights are calculated, so the risk calculation and eventual portfolio
+totals use one currency. Raw market prices retain their native `quote_currency`;
+the sizing command verifies that metadata against its configuration. The
+conversion audit records both `quote_currency` and `base_currency`.
+
+The FX file is long format. `rate_to_base` means USD per one unit of the quote
+currency; for example, `0.78` means SGD 1 = USD 0.78:
+
+```csv
+rate_time_utc,quote_currency,base_currency,rate_to_base
+2026-09-29T16:00:00Z,SGD,USD,0.78
+2026-09-30T16:00:00Z,SGD,USD,0.779
+```
+
+The converter uses the latest rate available on or before each price date and
+never fills backwards from a future rate. An FX file is not needed when every
+selected asset is USD or USDT, for example `--instrument SPY TLT BTCUSDT`.
+Historical FX coverage is required when STI is selected; it should cover the
+volatility lookback as well as the reporting period.
+
+The reusable `target_quantities` function requires base-currency prices,
+preventing accidental addition of USD, SGD, and USDT notionals. The current
+command produces risk weights only. Combining weights with strategy signals,
+executing target quantities, and reporting fees and P&L in USD are the next
+integration stage.
 
 ## Setup
 
@@ -346,6 +435,7 @@ python run_market_data_pipeline.py --help
 python run_strategy_backtest.py --help
 python run_parameter_experiments.py --help
 python run_strategy_optimizer.py --help
+python run_portfolio_weights.py --help
 ```
 
 ### Ingestion options

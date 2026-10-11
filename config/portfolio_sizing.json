@@ -1,0 +1,42 @@
+{
+  "method": "capped_inverse_volatility",
+  "lookback_observations": 60,
+  "minimum_observations": 40,
+  "target_gross_exposure": 0.95,
+  "volatility_floor": 0.05,
+  "rebalance_frequency": "weekly",
+  "signal_policy": "long_or_cash",
+  "inactive_allocation": "cash",
+  "base_currency": "USD",
+  "volatility_currency_basis": "base_currency_converted_adjusted_close",
+  "static_rates_to_base": {
+    "USD": 1.0,
+    "USDT": 1.0
+  },
+  "assets": {
+    "spy_usd": {
+      "quote_currency": "USD",
+      "annualization_periods": 252,
+      "maximum_weight": 0.4,
+      "quantity_step": 1.0
+    },
+    "tlt_usd": {
+      "quote_currency": "USD",
+      "annualization_periods": 252,
+      "maximum_weight": 0.4,
+      "quantity_step": 1.0
+    },
+    "sti_es3_sgd": {
+      "quote_currency": "SGD",
+      "annualization_periods": 252,
+      "maximum_weight": 0.35,
+      "quantity_step": 1.0
+    },
+    "btc_usdt": {
+      "quote_currency": "USDT",
+      "annualization_periods": 365,
+      "maximum_weight": 0.25,
+      "quantity_step": 0.000001
+    }
+  }
+}

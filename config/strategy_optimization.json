@@ -1,5 +1,10 @@
 {
   "official_test_start_utc": "2026-10-01T00:00:00Z",
+  "period_policy": {
+    "training": "Used for grid-search parameter selection and ranking.",
+    "validation": "Evaluated only after selection and never used for ranking.",
+    "official_test": "All observations from 2026-10-01 onward are excluded from training and validation."
+  },
   "score_weights": {
     "sharpe_stability_penalty": 0.5,
     "drawdown_penalty": 2.0
@@ -7,28 +12,28 @@
   "assets": {
     "spy_usd": {
       "strategy": "momentum",
-      "development_period": {
+      "training_period": {
         "start": "2023-09-18T00:00:00Z",
         "end": "2025-10-01T00:00:00Z"
       },
-      "development_folds": [
+      "training_folds": [
         {
-          "fold_id": "spy_dev_1",
+          "fold_id": "spy_train_1",
           "start": "2023-09-18T00:00:00Z",
           "end": "2024-04-01T00:00:00Z"
         },
         {
-          "fold_id": "spy_dev_2",
+          "fold_id": "spy_train_2",
           "start": "2024-04-01T00:00:00Z",
           "end": "2024-10-01T00:00:00Z"
         },
         {
-          "fold_id": "spy_dev_3",
+          "fold_id": "spy_train_3",
           "start": "2024-10-01T00:00:00Z",
           "end": "2025-04-01T00:00:00Z"
         },
         {
-          "fold_id": "spy_dev_4",
+          "fold_id": "spy_train_4",
           "start": "2025-04-01T00:00:00Z",
           "end": "2025-10-01T00:00:00Z"
         }
@@ -53,23 +58,28 @@
     },
     "sti_es3_sgd": {
       "strategy": "mean_reversion",
-      "development_period": {
-        "start": "2026-07-21T00:00:00Z",
+      "training_period": {
+        "start": "2026-07-06T00:00:00Z",
         "end": "2026-09-01T00:00:00Z"
       },
-      "development_folds": [
+      "training_folds": [
         {
-          "fold_id": "sti_dev_1",
+          "fold_id": "sti_train_0",
+          "start": "2026-07-06T00:00:00Z",
+          "end": "2026-07-21T00:00:00Z"
+        },
+        {
+          "fold_id": "sti_train_1",
           "start": "2026-07-21T00:00:00Z",
           "end": "2026-08-04T00:00:00Z"
         },
         {
-          "fold_id": "sti_dev_2",
+          "fold_id": "sti_train_2",
           "start": "2026-08-04T00:00:00Z",
           "end": "2026-08-18T00:00:00Z"
         },
         {
-          "fold_id": "sti_dev_3",
+          "fold_id": "sti_train_3",
           "start": "2026-08-18T00:00:00Z",
           "end": "2026-09-01T00:00:00Z"
         }
