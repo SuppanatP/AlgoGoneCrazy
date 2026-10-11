@@ -41,6 +41,10 @@ def load_fx_rates(path: Path, base_currency: str) -> pd.DataFrame:
     rates["rate_to_base"] = pd.to_numeric(
         rates["rate_to_base"], errors="coerce"
     )
+    if "source_observation_date" in rates.columns:
+        rates["source_observation_date"] = pd.to_datetime(
+            rates["source_observation_date"], errors="coerce", utc=True
+        ).dt.normalize()
     invalid = (
         rates["rate_time_utc"].isna()
         | rates["quote_currency"].isna()
@@ -87,7 +91,7 @@ def convert_daily_prices_to_base(
             f"Missing quote currencies for instruments: {sorted(missing_assets)}"
         )
 
-    dynamic: dict[str, pd.Series] = {}
+    dynamic: dict[str, pd.DataFrame] = {}
     if fx_rates is not None and not fx_rates.empty:
         unexpected = set(fx_rates["base_currency"].astype(str).str.upper()) - {base}
         if unexpected:
@@ -97,13 +101,14 @@ def convert_daily_prices_to_base(
             work["rate_time_utc"], utc=True
         ).dt.normalize()
         for currency, rows in work.groupby("quote_currency", sort=False):
-            series = (
+            latest = (
                 rows.sort_values("rate_time_utc")
-                .groupby("rate_date")["rate_to_base"]
-                .last()
-                .astype("float64")
+                .groupby("rate_date", as_index=False)
+                .tail(1)
+                .set_index("rate_date")
+                .sort_index()
             )
-            dynamic[str(currency).upper()] = series
+            dynamic[str(currency).upper()] = latest
 
     converted = pd.DataFrame(index=daily_native_prices.index)
     audit_rows: list[dict[str, object]] = []
@@ -113,19 +118,48 @@ def convert_daily_prices_to_base(
         if currency in static:
             rate = pd.Series(static[currency], index=native.index, dtype="float64")
             rate_source = "static"
+            source_series = ""
+            source_observation_date = pd.Series(
+                pd.NaT, index=native.index, dtype="datetime64[ns, UTC]"
+            )
+            source_rate_time = pd.Series(
+                pd.NaT, index=native.index, dtype="datetime64[ns, UTC]"
+            )
+            forward_filled = pd.Series(False, index=native.index, dtype="bool")
         else:
             if currency not in dynamic:
                 raise ValueError(
                     f"No {currency}-to-{base} rates were supplied for {instrument_id}"
                 )
-            rate = dynamic[currency].reindex(native.index, method="ffill")
+            aligned = dynamic[currency].reindex(native.index, method="ffill")
+            rate = pd.to_numeric(aligned["rate_to_base"], errors="coerce")
             if rate.isna().any():
                 first_missing = rate.index[rate.isna()][0]
                 raise ValueError(
                     f"No point-in-time {currency}-to-{base} rate is available "
                     f"for {instrument_id} on or before {first_missing.date()}"
                 )
-            rate_source = "fx_file"
+            if "source" in aligned.columns:
+                rate_source = aligned["source"].fillna("fx_file").astype(str)
+            else:
+                rate_source = pd.Series("fx_file", index=native.index)
+            if "source_series" in aligned.columns:
+                source_series = aligned["source_series"].fillna("").astype(str)
+            else:
+                source_series = pd.Series("", index=native.index)
+            if "source_observation_date" in aligned.columns:
+                source_observation_date = pd.to_datetime(
+                    aligned["source_observation_date"], errors="coerce", utc=True
+                ).dt.normalize()
+            else:
+                source_observation_date = pd.Series(
+                    pd.NaT, index=native.index, dtype="datetime64[ns, UTC]"
+                )
+            source_rate_time = pd.to_datetime(
+                aligned["rate_time_utc"], errors="coerce", utc=True
+            )
+            target_dates = pd.Series(native.index, index=native.index)
+            forward_filled = source_rate_time.dt.normalize().lt(target_dates)
 
         base_price = native * rate
         converted.loc[base_price.index, instrument_id] = base_price
@@ -136,7 +170,27 @@ def convert_daily_prices_to_base(
                 "quote_currency": currency,
                 "base_currency": base,
                 "rate_to_base": float(rate.loc[date]),
-                "rate_source": rate_source,
+                "rate_source": (
+                    rate_source
+                    if isinstance(rate_source, str)
+                    else str(rate_source.loc[date])
+                ),
+                "source_series": (
+                    source_series
+                    if isinstance(source_series, str)
+                    else str(source_series.loc[date])
+                ),
+                "source_observation_date": (
+                    source_observation_date.loc[date]
+                    if pd.notna(source_observation_date.loc[date])
+                    else pd.NaT
+                ),
+                "fx_rate_time_utc": (
+                    source_rate_time.loc[date]
+                    if pd.notna(source_rate_time.loc[date])
+                    else pd.NaT
+                ),
+                "fx_is_forward_filled": bool(forward_filled.loc[date]),
                 "native_adjusted_close": float(native.loc[date]),
                 "base_adjusted_close": float(base_price.loc[date]),
             }

@@ -107,6 +107,7 @@ src/strategy_optimizer/
 src/portfolio_sizing/
   inverse_volatility.py  Daily volatility, capped allocation, weight schedules
   fx.py                  Point-in-time conversion into the USD portfolio base
+  fred_csv.py            Downloaded FRED SGD/USD CSV standardization
   targets.py             Signal gating and base-currency target quantities
 src/strategy_backtest.py Strategy-to-backtester adapter and output writer
 src/backtest.py          Reused bar-by-bar backtest engine
@@ -125,6 +126,7 @@ run_market_data_pipeline.py  One-command sequential workflow entry point
 run_strategy_backtest.py SPY/ES3 momentum and mean-reversion backtest entry point
 run_parameter_experiments.py Pre-test parameter comparison entry point
 run_strategy_optimizer.py Development-only strategy optimisation entry point
+run_fx_ingestion.py       Downloaded FRED SGD/USD standardization entry point
 run_portfolio_weights.py  Rolling inverse-volatility weight entry point
 ```
 
@@ -319,23 +321,53 @@ unused allocation remains cash and is not redistributed to active assets.
 The tracked defaults in `config/portfolio_sizing.json` use 60 daily return
 observations, permit a minimum of 40 while STI history remains short, rebalance
 weekly, reserve at least 5% cash, apply a 5% annualized volatility floor, and
-cap each asset. Every weight uses adjusted closing prices strictly before its
-rebalance date, so current or future closing prices cannot leak into the sizing
-decision.
+cap SPY at 40%, ES3.SI at 35%, and BTCUSDT at 25%. TLT is not part of the
+current portfolio. Every weight uses adjusted closing prices strictly before
+its rebalance date, so current or future closing prices cannot leak into the
+sizing decision.
 
-Build weights for every configured asset:
+The portfolio simulation starts with USD 100,000 in cash and no positions.
+There are no later external deposits or withdrawals. Sale proceeds, dividends,
+and other investment cash flows remain inside the portfolio and are not treated
+as capital injections.
+
+Download the maximum-history CSV for official FRED series `DEXSIUS` from
+`https://fred.stlouisfed.org/series/DEXSIUS` and save the unmodified file at:
+
+```text
+data/fx/raw/DEXSIUS.csv
+```
+
+Standardize the downloaded snapshot:
+
+```bash
+python run_fx_ingestion.py
+```
+
+No FRED account or API key is used by the code. The standardizer reads the
+downloaded `observation_date,DEXSIUS` file, discards FRED's missing-value rows,
+and stores `1 / DEXSIUS` as USD per SGD. The configured one-day availability
+lag prevents a same-day Federal Reserve fixing from being treated as known
+earlier that day. Re-running the command deterministically replaces the
+standardized output from the downloaded snapshot. Optional `--start` and
+`--end` arguments apply inclusive-start/exclusive-end filtering.
+
+The downloaded CSV, standardized FX CSV, and FX summary JSON are data
+artifacts beneath `data/`; they are ignored by Git and must not be committed.
+
+Build weights for the three configured assets:
 
 ```bash
 python run_portfolio_weights.py \
   --fx-file data/fx/fx_rates_to_usd.csv
 ```
 
-Build an SPY/STI-only diagnostic schedule from the backtest snapshot:
+Build a three-asset diagnostic schedule from the backtest snapshot:
 
 ```bash
 python run_portfolio_weights.py \
   --input-file data/canonical/market_bars_30m_training_validation.csv \
-  --instrument SPY ES3.SI \
+  --instrument SPY ES3.SI BTCUSDT \
   --fx-file data/fx/fx_rates_to_usd.csv
 ```
 
@@ -365,14 +397,14 @@ The FX file is long format. `rate_to_base` means USD per one unit of the quote
 currency; for example, `0.78` means SGD 1 = USD 0.78:
 
 ```csv
-rate_time_utc,quote_currency,base_currency,rate_to_base
-2026-09-29T16:00:00Z,SGD,USD,0.78
-2026-09-30T16:00:00Z,SGD,USD,0.779
+rate_time_utc,quote_currency,base_currency,rate_to_base,source,source_series,source_observation_date,is_forward_filled
+2026-09-30T00:00:00Z,SGD,USD,0.78,fred_download,DEXSIUS,2026-09-29,false
+2026-10-01T00:00:00Z,SGD,USD,0.779,fred_download,DEXSIUS,2026-09-30,false
 ```
 
 The converter uses the latest rate available on or before each price date and
 never fills backwards from a future rate. An FX file is not needed when every
-selected asset is USD or USDT, for example `--instrument SPY TLT BTCUSDT`.
+selected asset is USD or USDT, for example `--instrument SPY BTCUSDT`.
 Historical FX coverage is required when STI is selected; it should cover the
 volatility lookback as well as the reporting period.
 
@@ -404,7 +436,7 @@ Add the Alpaca credentials generated in the Alpaca dashboard:
 ```text
 ALPACA_API_KEY=your_key
 ALPACA_SECRET_KEY=your_secret
-ALPACA_DATA_FEED=sip
+ALPACA_DATA_FEED=iex
 ```
 
 The `.env` file is ignored by Git. Do not place credentials directly in source
@@ -435,6 +467,7 @@ python run_market_data_pipeline.py --help
 python run_strategy_backtest.py --help
 python run_parameter_experiments.py --help
 python run_strategy_optimizer.py --help
+python run_fx_ingestion.py --help
 python run_portfolio_weights.py --help
 ```
 

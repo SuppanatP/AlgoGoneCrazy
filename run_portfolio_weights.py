@@ -208,6 +208,22 @@ def main() -> None:
     base_currency = str(config.get("base_currency", "")).strip().upper()
     if not base_currency:
         raise ValueError("portfolio_sizing configuration must set base_currency")
+    initial_cash_base = float(config.get("initial_cash_base", 100_000.0))
+    if initial_cash_base <= 0:
+        raise ValueError("initial_cash_base must be positive")
+    starting_positions = str(config.get("starting_positions", "none")).strip().lower()
+    if starting_positions != "none":
+        raise ValueError("Only a zero-position portfolio start is currently supported")
+    external_cash_flow_policy = str(
+        config.get(
+            "external_cash_flow_policy",
+            "no_external_injections_or_withdrawals",
+        )
+    ).strip()
+    if external_cash_flow_policy != "no_external_injections_or_withdrawals":
+        raise ValueError(
+            "Only a fixed-capital simulation without external cash flows is supported"
+        )
     quote_currencies = {
         instrument_id: str(configured_assets[instrument_id]["quote_currency"])
         for instrument_id in instruments
@@ -270,6 +286,9 @@ def main() -> None:
         "quantity_conversion_performed": False,
         "base_currency": base_currency,
         "reported_currency": base_currency,
+        "initial_cash_base": initial_cash_base,
+        "starting_positions": starting_positions,
+        "external_cash_flow_policy": external_cash_flow_policy,
         "usdt_policy": "USDT is treated as USD at a fixed 1:1 rate",
         "volatility_currency_basis": config.get("volatility_currency_basis"),
         "configuration_snapshot": config,
@@ -294,6 +313,10 @@ def main() -> None:
     print(f"  cash reserve/unallocated: {1.0 - latest.sum():.2%}")
     print(f"\nOutputs -> {args.output_dir}")
     print(f"All sizing prices were converted to {base_currency} before calculation.")
+    print(
+        f"Simulation policy: start with {initial_cash_base:,.2f} {base_currency}, "
+        "no positions, and no later external cash injections or withdrawals."
+    )
     print(
         "This command produces risk weights only; signal combination and target "
         "quantity execution remain separate steps."

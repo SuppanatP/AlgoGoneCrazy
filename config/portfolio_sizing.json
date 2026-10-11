@@ -8,19 +8,24 @@
   "signal_policy": "long_or_cash",
   "inactive_allocation": "cash",
   "base_currency": "USD",
+  "initial_cash_base": 100000.0,
+  "starting_positions": "none",
+  "external_cash_flow_policy": "no_external_injections_or_withdrawals",
   "volatility_currency_basis": "base_currency_converted_adjusted_close",
   "static_rates_to_base": {
     "USD": 1.0,
     "USDT": 1.0
   },
+  "fx_ingestion": {
+    "provider": "fred_download",
+    "series_id": "DEXSIUS",
+    "input_file": "data/fx/raw/DEXSIUS.csv",
+    "availability_lag_days": 1,
+    "output_file": "data/fx/fx_rates_to_usd.csv",
+    "summary_file": "data/fx/fx_ingestion_summary.json"
+  },
   "assets": {
     "spy_usd": {
-      "quote_currency": "USD",
-      "annualization_periods": 252,
-      "maximum_weight": 0.4,
-      "quantity_step": 1.0
-    },
-    "tlt_usd": {
       "quote_currency": "USD",
       "annualization_periods": 252,
       "maximum_weight": 0.4,
