@@ -1,0 +1,49 @@
+{
+  "official_test_start_utc": "2026-10-01T00:00:00Z",
+  "sessions_per_evaluation_window": 14,
+  "window_step_sessions": 5,
+  "minimum_trade_window_rate": 1.0,
+  "shortlist_size": 5,
+  "joint_shortlist_size": 3,
+  "selection_policy": "Require at least one executed order in each historical two-week window, then rank by after-cost return and downside metrics. Never rank by trade frequency or overwrite selected_strategies.json automatically.",
+  "joint_diagnostic_period": {
+    "start": "2026-09-11T00:00:00Z",
+    "end": "2026-10-01T00:00:00Z",
+    "role": "Latest known 20-calendar-day diagnostic period before October; not an untouched validation period after redesign."
+  },
+  "sizing_comparison_period": {
+    "start": "2026-09-07T00:00:00Z",
+    "end": "2026-10-01T00:00:00Z",
+    "session_reference_asset": "spy_usd",
+    "role": "Pre-October rolling-window sensitivity comparison after enough STI history exists for sizing; September is already known and this is not untouched validation."
+  },
+  "assets": {
+    "spy_usd": {
+      "strategy": "momentum",
+      "training_period": {
+        "start": "2023-09-18T00:00:00Z",
+        "end": "2025-10-01T00:00:00Z"
+      },
+      "decision_intervals_minutes": [30, 60, 120],
+      "fast_horizon_sessions": [1, 2],
+      "slow_horizon_sessions": [4, 6],
+      "return_lookback_sessions": [2, 4],
+      "entry_thresholds": [0.0025, 0.005],
+      "exit_threshold": 0.0
+    },
+    "sti_es3_sgd": {
+      "strategy": "mean_reversion",
+      "training_period": {
+        "start": "2026-07-06T00:00:00Z",
+        "end": "2026-09-01T00:00:00Z"
+      },
+      "decision_intervals_minutes": [30, 60, 120],
+      "lookback_horizon_sessions": [2, 4],
+      "entry_z_scores": [-1.5, -2.0, -2.5],
+      "exit_z_scores": [-0.5, 0.0],
+      "minimum_holding_sessions": 1,
+      "cooldown_sessions": 1,
+      "maximum_holding_sessions": 5
+    }
+  }
+}

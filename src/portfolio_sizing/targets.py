@@ -16,8 +16,9 @@ def apply_signals_to_weights(
 ) -> pd.DataFrame:
     """Apply weekly/daily risk budgets to timestamped strategy targets.
 
-    Signals are target exposures rather than trade commands. Inactive strategy
-    allocations remain cash; active assets are not renormalized upward.
+    Signals are target exposures rather than trade commands. This static helper
+    only gates a supplied schedule. The shared portfolio simulator performs the
+    project's dynamic active-signal redistribution and common-cap enforcement.
     """
     if weight_schedule.empty:
         raise ValueError("weight_schedule is empty")

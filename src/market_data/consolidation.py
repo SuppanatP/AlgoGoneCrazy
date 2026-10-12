@@ -16,7 +16,6 @@ from market_data.schema import AGGREGATED_BAR_COLUMNS
 FINAL_AGGREGATE_FILE_NAME = "market_bars_30m_with_backfill.csv"
 DEFAULT_REQUIRED_INSTRUMENTS = {
     "spy_usd",
-    "tlt_usd",
     "btc_usdt",
     "sti_es3_sgd",
 }

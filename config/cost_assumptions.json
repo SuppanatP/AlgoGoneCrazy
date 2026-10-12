@@ -74,15 +74,10 @@
   "fx_conversion": {
     "pair": "USDSGD",
     "broker": "IBKR IdealPro",
-    "applies_to": [
-      "STI_ETF"
-    ],
-    "fee_pct": 2e-05,
-    "fee_min": {
-      "amount": 2.0,
-      "currency": "USD"
-    },
-    "notes": "Only applies to the SGD<->USD leg (STI ETF). BTC on Binance settles in USDT/USD directly; SP500 ETF is already USD."
+    "applies_to": [],
+    "fee_pct": 0.0,
+    "fee_min": null,
+    "notes": "FX transaction fees are excluded from the project simulation because they are not required by the brief. Historical SGD/USD rates are still used to convert STI prices, cash flows, and valuation into USD."
   },
   "sources": {
     "ibkr_sgx_stocks": "https://www.interactivebrokers.com.sg/en/pricing/commissions-stocks.php",
@@ -96,7 +91,8 @@
     "note": "Finalized methodology for the backtest simulation -- no more plan/discount ambiguity.",
     "SP500_ETF_and_TLT_plan": "IBKR Pro Tiered (USD 0.0035/share, min USD 0.35/order, capped at 1% of trade value) -- switched from IBKR Lite because Lite is retail-individual/joint/trust-account-only and doesn't fit a fund-pitching-to-investors framing; a real fund would face Pro-tier (or institutional) pricing, not a $0 retail rate. Pro Tiered chosen over Pro Fixed since Tiered dominates Fixed at every order size.",
     "BTC_plan": "Binance standard rate, no BNB discount assumed (0.10%, not 0.075%)",
-    "position_sizing": "Fixed capital allocation per instrument, fully invested when signal is long/flat: shares = floor(allocated_capital / price) for SPY/TLT/STI (whole shares); BTC uses fractional units (allocated_capital / price).",
+    "FX_fee_plan": "No FX transaction fee is modeled. SGD/USD conversion rates remain required for USD reporting.",
+    "position_sizing": "Allocate up to 95% of portfolio equity across active long signals using the selected inverse-volatility or equal-weight method, subject to one common 60% per-asset concentration limit. Whole shares are used for SPY/STI; BTC uses fractional units.",
     "framing": "Project is pitched as a fund offering to outside investors, not an individual student trading account.",
     "interest_and_funding": "Assumed zero for all legs (SGD, USD, BTC): no interest on idle cash, no margin/borrow cost, no funding payments. Not modeled in the backtest."
   }

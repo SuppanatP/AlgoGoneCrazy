@@ -18,7 +18,6 @@ from market_data.consolidation import (  # noqa: E402
 
 DEFAULT_INPUT_DIRECTORIES = [
     Path("data/staging/alpaca_market_data/SPY"),
-    Path("data/staging/alpaca_market_data/TLT"),
     Path("data/staging/binance_spot/BTCUSDT"),
     Path("data/staging/yahoo_finance/ES3_SI"),
 ]
@@ -38,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Provider/symbol directory containing the final backfilled CSV. "
             "Repeat for each selected asset. When omitted, the temporary "
-            "Alpaca SPY and TLT, Binance BTCUSDT, and Yahoo ES3.SI paths "
+            "Alpaca SPY, Binance BTCUSDT, and Yahoo ES3.SI paths "
             "are used."
         ),
     )
@@ -63,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-partial",
         action="store_true",
-        help="Allow consolidation when one or more of the four assets is absent.",
+        help="Allow consolidation when one or more of the three assets is absent.",
     )
     return parser
 

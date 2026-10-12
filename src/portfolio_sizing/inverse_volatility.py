@@ -1,4 +1,4 @@
-"""Rolling inverse-volatility portfolio weights with concentration caps."""
+"""Rolling inverse-volatility or equal weights with concentration caps."""
 
 from __future__ import annotations
 
@@ -7,6 +7,38 @@ from typing import Iterable, Mapping
 
 import numpy as np
 import pandas as pd
+
+
+SUPPORTED_WEIGHTING_METHODS = {
+    "capped_inverse_volatility",
+    "capped_equal_weight",
+}
+
+
+def configured_maximum_weight(
+    sizing_config: Mapping[str, object],
+    instrument_id: str,
+) -> float:
+    """Return the shared concentration limit, with legacy per-asset fallback."""
+    shared = sizing_config.get("maximum_asset_weight")
+    if shared is not None:
+        maximum = float(shared)
+    else:
+        assets = sizing_config.get("assets")
+        if not isinstance(assets, Mapping) or instrument_id not in assets:
+            raise ValueError(f"No sizing configuration for {instrument_id}")
+        asset_config = assets[instrument_id]
+        if (
+            not isinstance(asset_config, Mapping)
+            or "maximum_weight" not in asset_config
+        ):
+            raise ValueError(
+                "Sizing configuration must set maximum_asset_weight"
+            )
+        maximum = float(asset_config["maximum_weight"])
+    if not 0 < maximum <= 1:
+        raise ValueError("maximum_asset_weight must be in (0, 1]")
+    return maximum
 
 
 class InsufficientHistoryError(ValueError):
@@ -39,8 +71,9 @@ class AssetRiskSettings:
 
 @dataclass(frozen=True)
 class InverseVolatilitySettings:
-    """Portfolio-wide inverse-volatility policy."""
+    """Portfolio-wide weighting policy and common risk-estimation settings."""
 
+    method: str = "capped_inverse_volatility"
     lookback_observations: int = 60
     minimum_observations: int = 40
     target_gross_exposure: float = 0.95
@@ -48,6 +81,11 @@ class InverseVolatilitySettings:
     rebalance_frequency: str = "weekly"
 
     def validate(self) -> None:
+        if self.method not in SUPPORTED_WEIGHTING_METHODS:
+            raise ValueError(
+                "method must be capped_inverse_volatility or "
+                "capped_equal_weight"
+            )
         if self.lookback_observations < 2:
             raise ValueError("lookback_observations must be at least 2")
         if not 2 <= self.minimum_observations <= self.lookback_observations:
@@ -166,23 +204,18 @@ def rebalance_dates(
     return scheduled.sort_values().unique()
 
 
-def allocate_capped_inverse_volatility(
-    volatilities: pd.Series,
+def allocate_capped_scores(
+    scores: pd.Series,
     target_gross_exposure: float,
     maximum_weights: Mapping[str, float],
 ) -> pd.Series:
-    """Allocate inverse-volatility weights without breaching asset caps.
-
-    If the configured caps cannot absorb the target exposure, the remainder is
-    deliberately left as cash rather than violating a cap.
-    """
     if not 0 < target_gross_exposure <= 1:
         raise ValueError("target_gross_exposure must be in (0, 1]")
-    values = pd.to_numeric(volatilities, errors="coerce")
+    values = pd.to_numeric(scores, errors="coerce")
     if values.empty or values.isna().any() or (~np.isfinite(values)).any():
-        raise ValueError("Volatilities must be finite")
+        raise ValueError("Allocation scores must be finite")
     if values.le(0).any():
-        raise ValueError("Volatilities must be positive")
+        raise ValueError("Allocation scores must be positive")
 
     assets = list(values.index.astype(str))
     missing_caps = set(assets) - set(maximum_weights)
@@ -192,17 +225,17 @@ def allocate_capped_inverse_volatility(
     if any(cap <= 0 or cap > 1 for cap in caps.values()):
         raise ValueError("Maximum weights must be in (0, 1]")
 
-    scores = {asset: 1.0 / float(values.loc[asset]) for asset in assets}
+    score_values = {asset: float(values.loc[asset]) for asset in assets}
     weights = {asset: 0.0 for asset in assets}
     remaining = set(assets)
     remaining_budget = float(target_gross_exposure)
 
     while remaining and remaining_budget > 1e-12:
-        score_total = sum(scores[asset] for asset in remaining)
+        score_total = sum(score_values[asset] for asset in remaining)
         if score_total <= 0:
             break
         proposed = {
-            asset: remaining_budget * scores[asset] / score_total
+            asset: remaining_budget * score_values[asset] / score_total
             for asset in remaining
         }
         capped = [
@@ -222,6 +255,44 @@ def allocate_capped_inverse_volatility(
         remaining_budget = max(remaining_budget, 0.0)
 
     return pd.Series(weights, dtype="float64", name="target_weight")
+
+
+def allocate_capped_inverse_volatility(
+    volatilities: pd.Series,
+    target_gross_exposure: float,
+    maximum_weights: Mapping[str, float],
+) -> pd.Series:
+    """Allocate inverse-volatility weights without breaching asset caps.
+
+    If the configured caps cannot absorb the target exposure, the remainder is
+    deliberately left as cash rather than violating a cap.
+    """
+    values = pd.to_numeric(volatilities, errors="coerce")
+    if values.empty or values.isna().any() or (~np.isfinite(values)).any():
+        raise ValueError("Volatilities must be finite")
+    if values.le(0).any():
+        raise ValueError("Volatilities must be positive")
+    return allocate_capped_scores(
+        1.0 / values,
+        target_gross_exposure,
+        maximum_weights,
+    )
+
+
+def allocate_capped_equal_weight(
+    assets: Iterable[str],
+    target_gross_exposure: float,
+    maximum_weights: Mapping[str, float],
+) -> pd.Series:
+    """Allocate equal weights without breaching the common concentration cap."""
+    asset_list = list(dict.fromkeys(str(asset) for asset in assets))
+    if not asset_list:
+        raise ValueError("At least one asset is required for equal weighting")
+    return allocate_capped_scores(
+        pd.Series(1.0, index=asset_list, dtype="float64"),
+        target_gross_exposure,
+        maximum_weights,
+    )
 
 
 def _volatility_estimate(
@@ -317,11 +388,23 @@ def build_weight_schedule(
                 )
 
         if date_valid:
-            weights = allocate_capped_inverse_volatility(
-                pd.Series(effective_volatility),
-                settings.target_gross_exposure,
-                caps,
-            )
+            if settings.method == "capped_inverse_volatility":
+                allocation_scores = {
+                    asset: 1.0 / effective_volatility[asset]
+                    for asset in assets
+                }
+                weights = allocate_capped_inverse_volatility(
+                    pd.Series(effective_volatility),
+                    settings.target_gross_exposure,
+                    caps,
+                )
+            else:
+                allocation_scores = {asset: 1.0 for asset in assets}
+                weights = allocate_capped_equal_weight(
+                    assets,
+                    settings.target_gross_exposure,
+                    caps,
+                )
             weight_row: dict[str, float | pd.Timestamp] = {
                 "rebalance_date_utc": as_of_date,
                 **{asset: float(weights.loc[asset]) for asset in assets},
@@ -329,13 +412,17 @@ def build_weight_schedule(
             weight_rows.append(weight_row)
             for row in date_diagnostics:
                 asset = str(row["instrument_id"])
+                row["weighting_method"] = settings.method
                 row["inverse_volatility_score"] = 1.0 / float(
                     row["effective_volatility"]
                 )
+                row["allocation_score"] = float(allocation_scores[asset])
                 row["target_weight"] = float(weights.loc[asset])
         else:
             for row in date_diagnostics:
+                row["weighting_method"] = settings.method
                 row["inverse_volatility_score"] = np.nan
+                row["allocation_score"] = np.nan
                 row["target_weight"] = np.nan
         diagnostic_rows.extend(date_diagnostics)
 

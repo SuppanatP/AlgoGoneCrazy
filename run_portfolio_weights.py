@@ -1,4 +1,4 @@
-"""Build a rolling capped inverse-volatility weight schedule."""
+"""Build a rolling capped inverse-volatility or equal-weight schedule."""
 
 from __future__ import annotations
 
@@ -18,7 +18,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from src.portfolio_sizing import (  # noqa: E402
     AssetRiskSettings,
     InverseVolatilitySettings,
+    SUPPORTED_WEIGHTING_METHODS,
     build_weight_schedule,
+    configured_maximum_weight,
     convert_daily_prices_to_base,
     daily_adjusted_closes,
     load_fx_rates,
@@ -29,8 +31,6 @@ from src.portfolio_sizing import (  # noqa: E402
 INSTRUMENT_ALIASES = {
     "spy": "spy_usd",
     "spy_usd": "spy_usd",
-    "tlt": "tlt_usd",
-    "tlt_usd": "tlt_usd",
     "es3": "sti_es3_sgd",
     "es3.si": "sti_es3_sgd",
     "sg.es3": "sti_es3_sgd",
@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--end",
         help="Exclusive UTC sizing date; defaults to one day after common data ends.",
+    )
+    parser.add_argument(
+        "--sizing-method",
+        choices=sorted(SUPPORTED_WEIGHTING_METHODS),
+        help="Override the weighting method configured in portfolio_sizing.json.",
     )
     return parser
 
@@ -181,6 +186,10 @@ def main() -> None:
     instruments = _resolve_instruments(args.instrument, configured_assets)
 
     policy = InverseVolatilitySettings(
+        method=str(
+            args.sizing_method
+            or config.get("method", "capped_inverse_volatility")
+        ),
         lookback_observations=int(config.get("lookback_observations", 60)),
         minimum_observations=int(config.get("minimum_observations", 40)),
         target_gross_exposure=float(config.get("target_gross_exposure", 0.95)),
@@ -192,9 +201,7 @@ def main() -> None:
             annualization_periods=int(
                 configured_assets[instrument_id]["annualization_periods"]
             ),
-            maximum_weight=float(
-                configured_assets[instrument_id]["maximum_weight"]
-            ),
+            maximum_weight=configured_maximum_weight(config, instrument_id),
             quantity_step=float(configured_assets[instrument_id]["quantity_step"]),
         )
         for instrument_id in instruments
@@ -259,7 +266,7 @@ def main() -> None:
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    weight_path = args.output_dir / "inverse_volatility_weights.csv"
+    weight_path = args.output_dir / "portfolio_weights.csv"
     diagnostic_path = args.output_dir / "volatility_diagnostics.csv"
     conversion_path = args.output_dir / "currency_conversion.csv"
     weight_output = weights.copy()
@@ -285,6 +292,8 @@ def main() -> None:
         "signals_applied": False,
         "quantity_conversion_performed": False,
         "base_currency": base_currency,
+        "weighting_method": policy.method,
+        "maximum_asset_weight": configured_maximum_weight(config, instruments[0]),
         "reported_currency": base_currency,
         "initial_cash_base": initial_cash_base,
         "starting_positions": starting_positions,
@@ -306,7 +315,7 @@ def main() -> None:
 
     latest_date = weights.index[-1]
     latest = weights.iloc[-1]
-    print(f"\nLatest ready inverse-volatility weights ({latest_date.date()})")
+    print(f"\nLatest ready {policy.method} weights ({latest_date.date()})")
     for instrument_id in instruments:
         print(f"  {instrument_id}: {latest[instrument_id]:.2%}")
     print(f"  allocated: {latest.sum():.2%}")
