@@ -22,6 +22,14 @@ The training/validation file's STI rows come from the merged Yahoo history in
 30 September 2026. The October simulation input contains earlier bars only as
 indicator and sizing warm-up; simulation P&L begins on 1 October.
 
+The market-data file is submitted separately rather than committed. A rerun is
+the same experiment only when the supplied files have these checksums:
+
+| File | Data rows | SHA-256 |
+|---|---:|---|
+| `market_bars_30m_training_validation.csv` | 73,746 | `9fbd584b75467353be424cb76dfd8904653cb675751248386c3504b0519227e7` |
+| `fx_rates_to_usd.csv` | 11,480 | `51ec9fde366f48e472d369448ef2d95e606c7f5832e91981ce88e59f1c7aa046` |
+
 ## Experiments and configurations
 
 | Experiment | Purpose | Configuration retained |
@@ -53,7 +61,34 @@ Several snapshots contain the same parameter values because the experiment
 changed sizing rather than signal generation. They remain separately named so
 the input combination used by each recorded experiment is unambiguous.
 
-## Final pre-October search
+## Experiment sequence for presentation
+
+Present strategy selection and portfolio construction as related but separate
+steps:
+
+1. Generate the SPY momentum and STI mean-reversion parameter grids.
+2. Screen each asset's candidates over its training windows using the same
+   execution timing, raw-price fills, FX conversion, and commission model.
+3. Rank robustness and shortlist candidates. Trade frequency remains a
+   diagnostic, not a ranking objective.
+4. Compare portfolio sizing designs: equal weighting, inverse volatility,
+   performance-adjusted inverse volatility, and history-confidence inverse
+   volatility. This is the portfolio-construction experiment, after signal
+   screening and before the final joint comparison.
+5. Freeze history-confidence inverse-volatility sizing because it is the
+   simpler rule, discounts STI's short history, retains inactive allocations
+   as cash, and avoids adding a return/Sharpe forecast multiplier.
+6. Evaluate shortlisted SPY/STI pairs together on the validation period under
+   that frozen sizing rule.
+7. Select the highest after-cost joint validation pair and freeze both the
+   strategy parameters and sizing configuration before final evaluation.
+
+The sizing experiment should normally be one methods slide or an appendix
+table. It is important because the final pair is selected from a shared
+portfolio result, but the presentation does not need every exploratory sizing
+configuration on the main strategy-selection slide.
+
+## Final training and validation search
 
 The final search evaluated 48 SPY momentum candidates and 168 STI
 mean-reversion candidates. Candidate screening used rolling 14-session windows
@@ -76,7 +111,30 @@ after-cost joint validation return among the shortlisted pairs.
 
 The frozen pair is stored in `config/selected_strategies.json`.
 
-### Pre-October evidence
+### Exact reproduction command
+
+Place the separately submitted data at the paths shown below, then run:
+
+```bash
+python run_two_week_strategy_optimization.py \
+  --input-file data/canonical/market_bars_30m_training_validation.csv \
+  --fx-file data/fx/fx_rates_to_usd.csv \
+  --config-file config/sti_mean_reversion_expanded_optimization.json \
+  --selected-strategies config/strategy_search_baseline.json \
+  --sizing-config config/portfolio_sizing_history_confidence_cash_retention.json \
+  --cost-config config/cost_assumptions.json \
+  --output-dir results/final_training_validation_selection \
+  --progress-every 10
+```
+
+`config/strategy_search_baseline.json` is deliberately different from the
+frozen output selection, preventing the final pair from being supplied to its
+own search. The first row of `joint_diagnostic_summary.csv` should identify
+SPY candidate `0041` and STI candidate `0052`. The command does not overwrite
+`config/selected_strategies.json`; that file is the reviewed, frozen record of
+the winning row.
+
+### Training and validation evidence
 
 | Result | SPY 0041 | STI 0052 |
 |---|---:|---:|
@@ -119,33 +177,15 @@ The selected sizing configuration is `config/portfolio_sizing.json`:
 - Signals use adjusted prices; simulated execution and valuation use raw market
   prices; broker commissions are included.
 
-## October diagnostics already observed
-
-October snapshots are diagnostics only. They were observed after the evaluation
-period began and therefore cannot justify parameter or sizing selection.
-
-For data available through 12 October, the frozen pair and sizing rule returned
-0.4912% (USD 2,456.12), with a 3.86 annualized Sharpe ratio, -0.7259% maximum
-drawdown, two completed round trips, and USD 183.50 in transaction costs. SPY
-contributed USD 2,779.61 and STI contributed -USD 323.49. BTC had no signal file
-and did not trade. These are partial-period figures and must be replaced by the
-final 1-20 October result.
-
-Post-observation sizing comparisons were also run. Price-performance sizing
-with redistribution returned -0.6316%, price-performance sizing with cash
-retention returned 0.3319%, strategy-performance sizing returned 0.2680%, and
-the simpler history-confidence rule returned 0.4912% on that snapshot. These
-runs supported choosing the simpler rule, but they are not clean out-of-sample
-selection evidence.
-
-## Final-run and retention policy
+## Final evaluation and retention policy
 
 At the end of 20 October:
 
 1. Refresh the October pipeline through the last completed bar.
 2. Run the frozen simulation from `2026-10-01` to the exclusive end
    `2026-10-21` without changing either frozen configuration.
-3. Replace the partial October figures in this file with final figures.
+3. Add the completed evaluation-period results to this file as a separate final
+   simulation section; do not feed them back into strategy or sizing selection.
 4. Retain and commit the final October canonical market-data CSV, its
    consolidation summary, the submitted daily-closing-price CSV, and the final
    compact performance summary/manifest.

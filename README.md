@@ -522,42 +522,24 @@ allocation score = min(1, prior daily observations / 252) / volatility
 It also keeps inactive allocations as cash and locks each position's quantity
 from entry until the strategy exits. Weekly weight changes therefore affect the
 next entry but do not generate resizing orders for an already-open position.
-Run the no-trade-filter, pre-October joint diagnostic with:
+Run the no-trade-filter training and validation experiment with:
 
 ```bash
 python run_two_week_strategy_optimization.py \
   --input-file data/canonical/market_bars_30m_training_validation.csv \
   --config-file config/sti_mean_reversion_expanded_optimization.json \
-  --selected-strategies config/selected_strategies.json \
+  --selected-strategies config/strategy_search_baseline.json \
   --sizing-config config/portfolio_sizing_history_confidence_cash_retention.json \
   --output-dir results/pre_october_joint_history_confidence_optimization \
   --progress-every 10
 ```
 
-The highest after-cost September joint validation result selects SPY momentum
-candidate `0041` and expanded STI mean-reversion candidate `0052`. The tracked
-selection is stored in
-`config/selected_parameters_pre_october_history_confidence.json`. Its note
-records that the reconstruction was executed after partial October performance
-had been observed even though every ranking input ends before 1 October. Replay
-the available October snapshot with:
-
-```bash
-python run_portfolio_simulation.py \
-  --input-file data/canonical/market_bars_30m_simulation_live_to_date.csv \
-  --strategy-config config/selected_parameters_pre_october_history_confidence.json \
-  --sizing-config config/portfolio_sizing_history_confidence_cash_retention.json \
-  --start 2026-10-01 \
-  --end 2026-10-13 \
-  --allow-missing-external \
-  --output-dir results/portfolio_simulation_october_live_to_date_pre_october_history_confidence
-```
-
-For the data available through 12 October, this replay returned `0.49%`,
-incurred USD `183.50` of transaction costs, and placed six orders. Its
-parameters were selected only from pre-October observations, but the
-reconstructed procedure was decided after partial October results existed and
-must be described accordingly.
+The highest after-cost joint validation result selects SPY momentum candidate
+`0041` and expanded STI mean-reversion candidate `0052`. The reviewed and
+frozen selection is stored in `config/selected_strategies.json`. The baseline
+file is intentionally separate, so the selected pair is not supplied as an
+input to its own search. The final evaluation-period simulation is reported
+separately after that period is complete.
 
 The ignored directory `results/two_week_strategy_optimization/` contains:
 

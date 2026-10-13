@@ -48,7 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--selected-strategies",
         type=Path,
-        default=Path("config/selected_strategies.json"),
+        default=Path("config/strategy_search_baseline.json"),
+        help=(
+            "Pre-search strategy baseline used as a comparator; it must not be "
+            "the frozen output selection."
+        ),
     )
     parser.add_argument(
         "--sizing-config",
