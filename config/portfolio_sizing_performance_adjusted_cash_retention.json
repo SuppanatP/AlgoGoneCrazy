@@ -1,0 +1,57 @@
+{
+  "method": "capped_confidence_adjusted_inverse_volatility",
+  "comparison_methods": [
+    "capped_confidence_adjusted_inverse_volatility"
+  ],
+  "lookback_observations": 60,
+  "minimum_observations": 40,
+  "target_gross_exposure": 0.95,
+  "maximum_asset_weight": 0.75,
+  "volatility_floor": 0.05,
+  "rebalance_frequency": "weekly",
+  "confidence_full_observations": 252,
+  "confidence_power": 0.5,
+  "performance_lookback_observations": 60,
+  "minimum_performance_observations": 20,
+  "performance_sharpe_scale": 2.0,
+  "performance_multiplier_floor": 0.25,
+  "performance_multiplier_ceiling": 1.5,
+  "target_weight_change_threshold": 0.05,
+  "performance_measure": "trailing_adjusted_price_daily_return_sharpe_strictly_before_rebalance",
+  "signal_policy": "long_or_cash",
+  "inactive_allocation": "hold_as_cash",
+  "base_currency": "USD",
+  "initial_cash_base": 500000.0,
+  "starting_positions": "none",
+  "external_cash_flow_policy": "no_external_injections_or_withdrawals",
+  "volatility_currency_basis": "base_currency_converted_adjusted_close",
+  "static_rates_to_base": {
+    "USD": 1.0,
+    "USDT": 1.0
+  },
+  "fx_ingestion": {
+    "provider": "fred_download",
+    "series_id": "DEXSIUS",
+    "input_file": "data/fx/raw/DEXSIUS.csv",
+    "availability_lag_days": 1,
+    "output_file": "data/fx/fx_rates_to_usd.csv",
+    "summary_file": "data/fx/fx_ingestion_summary.json"
+  },
+  "assets": {
+    "spy_usd": {
+      "quote_currency": "USD",
+      "annualization_periods": 252,
+      "quantity_step": 1.0
+    },
+    "sti_es3_sgd": {
+      "quote_currency": "SGD",
+      "annualization_periods": 252,
+      "quantity_step": 1.0
+    },
+    "btc_usdt": {
+      "quote_currency": "USDT",
+      "annualization_periods": 365,
+      "quantity_step": 0.000001
+    }
+  }
+}

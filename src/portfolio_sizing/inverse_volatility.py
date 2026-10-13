@@ -12,6 +12,9 @@ import pandas as pd
 SUPPORTED_WEIGHTING_METHODS = {
     "capped_inverse_volatility",
     "capped_equal_weight",
+    "capped_confidence_adjusted_inverse_volatility",
+    "capped_history_confidence_inverse_volatility",
+    "capped_strategy_performance_adjusted_inverse_volatility",
 }
 
 
@@ -79,12 +82,18 @@ class InverseVolatilitySettings:
     target_gross_exposure: float = 0.95
     volatility_floor: float = 0.05
     rebalance_frequency: str = "weekly"
+    confidence_full_observations: int = 252
+    confidence_power: float = 0.5
+    performance_lookback_observations: int = 60
+    minimum_performance_observations: int = 20
+    performance_sharpe_scale: float = 2.0
+    performance_multiplier_floor: float = 0.25
+    performance_multiplier_ceiling: float = 1.5
 
     def validate(self) -> None:
         if self.method not in SUPPORTED_WEIGHTING_METHODS:
             raise ValueError(
-                "method must be capped_inverse_volatility or "
-                "capped_equal_weight"
+                "method must be one of the supported weighting methods"
             )
         if self.lookback_observations < 2:
             raise ValueError("lookback_observations must be at least 2")
@@ -98,6 +107,25 @@ class InverseVolatilitySettings:
             raise ValueError("volatility_floor must be positive")
         if self.rebalance_frequency not in {"daily", "weekly"}:
             raise ValueError("rebalance_frequency must be daily or weekly")
+        if self.confidence_full_observations < 1:
+            raise ValueError("confidence_full_observations must be positive")
+        if self.confidence_power <= 0:
+            raise ValueError("confidence_power must be positive")
+        if self.performance_lookback_observations < 2:
+            raise ValueError(
+                "performance_lookback_observations must be at least 2"
+            )
+        if not 2 <= self.minimum_performance_observations <= self.performance_lookback_observations:
+            raise ValueError(
+                "minimum_performance_observations must be between 2 and "
+                "performance_lookback_observations"
+            )
+        if self.performance_sharpe_scale <= 0:
+            raise ValueError("performance_sharpe_scale must be positive")
+        if not 0 < self.performance_multiplier_floor <= self.performance_multiplier_ceiling:
+            raise ValueError(
+                "performance multiplier bounds must be positive and ordered"
+            )
 
 
 def _utc_date(value: object, label: str) -> pd.Timestamp:
@@ -320,11 +348,126 @@ def _volatility_estimate(
     return observation_count, annualized, effective
 
 
+def _confidence_performance_adjustment(
+    prices: pd.Series,
+    as_of_date: pd.Timestamp,
+    settings: InverseVolatilitySettings,
+    asset_settings: AssetRiskSettings,
+) -> tuple[int, int, float, float, float]:
+    """Return point-in-time history confidence and a clipped Sharpe multiplier."""
+    history = prices.loc[prices.index < as_of_date].dropna()
+    all_returns = history.pct_change(fill_method=None).dropna()
+    history_observations = int(len(all_returns))
+    performance_returns = all_returns.tail(
+        settings.performance_lookback_observations
+    )
+    performance_observations = int(len(performance_returns))
+    if performance_observations < settings.minimum_performance_observations:
+        raise InsufficientHistoryError(
+            performance_observations,
+            settings.minimum_performance_observations,
+        )
+
+    return_std = float(performance_returns.std(ddof=1))
+    if not np.isfinite(return_std):
+        raise ValueError("performance return volatility is not finite")
+    if return_std == 0:
+        annualized_sharpe = 0.0
+    else:
+        annualized_sharpe = float(
+            performance_returns.mean()
+            / return_std
+            * np.sqrt(asset_settings.annualization_periods)
+        )
+    confidence = min(
+        1.0,
+        (
+            history_observations / settings.confidence_full_observations
+        )
+        ** settings.confidence_power,
+    )
+    performance_multiplier = float(
+        np.clip(
+            1.0 + annualized_sharpe / settings.performance_sharpe_scale,
+            settings.performance_multiplier_floor,
+            settings.performance_multiplier_ceiling,
+        )
+    )
+    return (
+        history_observations,
+        performance_observations,
+        annualized_sharpe,
+        confidence,
+        performance_multiplier,
+    )
+
+
+def _history_confidence(
+    prices: pd.Series,
+    as_of_date: pd.Timestamp,
+    settings: InverseVolatilitySettings,
+) -> tuple[int, float]:
+    history = prices.loc[prices.index < as_of_date].dropna()
+    history_observations = int(
+        len(history.pct_change(fill_method=None).dropna())
+    )
+    confidence = min(
+        1.0,
+        (
+            history_observations / settings.confidence_full_observations
+        )
+        ** settings.confidence_power,
+    )
+    return history_observations, float(confidence)
+
+
+def _strategy_performance_adjustment(
+    returns: pd.Series,
+    as_of_date: pd.Timestamp,
+    settings: InverseVolatilitySettings,
+    asset_settings: AssetRiskSettings,
+) -> tuple[int, float, float]:
+    """Return a clipped multiplier from prior after-cost strategy returns."""
+    history = pd.to_numeric(
+        returns.loc[returns.index < as_of_date], errors="coerce"
+    ).dropna()
+    performance_returns = history.tail(
+        settings.performance_lookback_observations
+    )
+    performance_observations = int(len(performance_returns))
+    if performance_observations < settings.minimum_performance_observations:
+        raise InsufficientHistoryError(
+            performance_observations,
+            settings.minimum_performance_observations,
+        )
+
+    return_std = float(performance_returns.std(ddof=1))
+    if not np.isfinite(return_std):
+        raise ValueError("strategy return volatility is not finite")
+    if return_std == 0:
+        annualized_sharpe = 0.0
+    else:
+        annualized_sharpe = float(
+            performance_returns.mean()
+            / return_std
+            * np.sqrt(asset_settings.annualization_periods)
+        )
+    performance_multiplier = float(
+        np.clip(
+            1.0 + annualized_sharpe / settings.performance_sharpe_scale,
+            settings.performance_multiplier_floor,
+            settings.performance_multiplier_ceiling,
+        )
+    )
+    return performance_observations, annualized_sharpe, performance_multiplier
+
+
 def build_weight_schedule(
     daily_prices: pd.DataFrame,
     dates: Iterable[object],
     settings: InverseVolatilitySettings,
     asset_settings: Mapping[str, AssetRiskSettings],
+    strategy_returns: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Calculate weights and long-form diagnostics for each rebalance date.
 
@@ -340,6 +483,25 @@ def build_weight_schedule(
         raise ValueError(f"Daily prices are missing assets: {sorted(missing_assets)}")
     for asset, item in asset_settings.items():
         item.validate(asset)
+    if (
+        settings.method
+        == "capped_strategy_performance_adjusted_inverse_volatility"
+    ):
+        if strategy_returns is None:
+            raise ValueError(
+                "strategy_returns are required for strategy-performance sizing"
+            )
+        missing_strategy_assets = set(assets) - set(strategy_returns.columns)
+        if missing_strategy_assets:
+            raise ValueError(
+                "Strategy returns are missing assets: "
+                f"{sorted(missing_strategy_assets)}"
+            )
+        strategy_returns = strategy_returns.copy()
+        strategy_returns.index = pd.DatetimeIndex(
+            pd.to_datetime(strategy_returns.index, utc=True)
+        )
+        strategy_returns = strategy_returns.sort_index()
 
     weight_rows: list[dict[str, float | pd.Timestamp]] = []
     diagnostic_rows: list[dict[str, object]] = []
@@ -348,6 +510,8 @@ def build_weight_schedule(
     for value in dates:
         as_of_date = _utc_date(value, "rebalance date")
         effective_volatility: dict[str, float] = {}
+        confidence_adjustments: dict[str, float] = {}
+        performance_multipliers: dict[str, float] = {}
         date_diagnostics: list[dict[str, object]] = []
         date_valid = True
 
@@ -360,6 +524,57 @@ def build_weight_schedule(
                     asset_settings[asset],
                 )
                 effective_volatility[asset] = effective
+                history_observations = observations
+                performance_observations = observations
+                annualized_sharpe = np.nan
+                confidence = 1.0
+                performance_multiplier = 1.0
+                if (
+                    settings.method
+                    == "capped_confidence_adjusted_inverse_volatility"
+                ):
+                    (
+                        history_observations,
+                        performance_observations,
+                        annualized_sharpe,
+                        confidence,
+                        performance_multiplier,
+                    ) = _confidence_performance_adjustment(
+                        daily_prices[asset],
+                        as_of_date,
+                        settings,
+                        asset_settings[asset],
+                    )
+                elif (
+                    settings.method
+                    == "capped_strategy_performance_adjusted_inverse_volatility"
+                ):
+                    history_observations, confidence = _history_confidence(
+                        daily_prices[asset],
+                        as_of_date,
+                        settings,
+                    )
+                    (
+                        performance_observations,
+                        annualized_sharpe,
+                        performance_multiplier,
+                    ) = _strategy_performance_adjustment(
+                        strategy_returns[asset],
+                        as_of_date,
+                        settings,
+                        asset_settings[asset],
+                    )
+                elif (
+                    settings.method
+                    == "capped_history_confidence_inverse_volatility"
+                ):
+                    history_observations, confidence = _history_confidence(
+                        daily_prices[asset],
+                        as_of_date,
+                        settings,
+                    )
+                confidence_adjustments[asset] = confidence
+                performance_multipliers[asset] = performance_multiplier
                 date_diagnostics.append(
                     {
                         "rebalance_date_utc": as_of_date,
@@ -369,6 +584,11 @@ def build_weight_schedule(
                         "return_observations": observations,
                         "annualized_volatility": annualized,
                         "effective_volatility": effective,
+                        "history_observations": history_observations,
+                        "performance_observations": performance_observations,
+                        "annualized_performance_sharpe": annualized_sharpe,
+                        "history_confidence": confidence,
+                        "performance_multiplier": performance_multiplier,
                     }
                 )
             except ValueError as error:
@@ -384,6 +604,11 @@ def build_weight_schedule(
                         ),
                         "annualized_volatility": np.nan,
                         "effective_volatility": np.nan,
+                        "history_observations": 0,
+                        "performance_observations": 0,
+                        "annualized_performance_sharpe": np.nan,
+                        "history_confidence": np.nan,
+                        "performance_multiplier": np.nan,
                     }
                 )
 
@@ -398,13 +623,33 @@ def build_weight_schedule(
                     settings.target_gross_exposure,
                     caps,
                 )
-            else:
+            elif settings.method == "capped_equal_weight":
                 allocation_scores = {asset: 1.0 for asset in assets}
                 weights = allocate_capped_equal_weight(
                     assets,
                     settings.target_gross_exposure,
                     caps,
                 )
+            elif settings.method in {
+                "capped_confidence_adjusted_inverse_volatility",
+                "capped_history_confidence_inverse_volatility",
+                "capped_strategy_performance_adjusted_inverse_volatility",
+            }:
+                allocation_scores = {
+                    asset: (
+                        confidence_adjustments[asset]
+                        * performance_multipliers[asset]
+                        / effective_volatility[asset]
+                    )
+                    for asset in assets
+                }
+                weights = allocate_capped_scores(
+                    pd.Series(allocation_scores, dtype="float64"),
+                    settings.target_gross_exposure,
+                    caps,
+                )
+            else:
+                raise ValueError(f"Unsupported weighting method: {settings.method}")
             weight_row: dict[str, float | pd.Timestamp] = {
                 "rebalance_date_utc": as_of_date,
                 **{asset: float(weights.loc[asset]) for asset in assets},

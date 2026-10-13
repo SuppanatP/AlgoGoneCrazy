@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-file",
         type=Path,
-        default=Path("data/canonical/market_bars_30m.csv"),
+        default=Path("data/canonical/market_bars_30m_simulation_live_to_date.csv"),
         help="Canonical long-format 30-minute market bars.",
     )
     parser.add_argument(
@@ -195,6 +195,25 @@ def main() -> None:
         target_gross_exposure=float(config.get("target_gross_exposure", 0.95)),
         volatility_floor=float(config.get("volatility_floor", 0.05)),
         rebalance_frequency=str(config.get("rebalance_frequency", "weekly")),
+        confidence_full_observations=int(
+            config.get("confidence_full_observations", 252)
+        ),
+        confidence_power=float(config.get("confidence_power", 0.5)),
+        performance_lookback_observations=int(
+            config.get("performance_lookback_observations", 60)
+        ),
+        minimum_performance_observations=int(
+            config.get("minimum_performance_observations", 20)
+        ),
+        performance_sharpe_scale=float(
+            config.get("performance_sharpe_scale", 2.0)
+        ),
+        performance_multiplier_floor=float(
+            config.get("performance_multiplier_floor", 0.25)
+        ),
+        performance_multiplier_ceiling=float(
+            config.get("performance_multiplier_ceiling", 1.5)
+        ),
     )
     asset_settings = {
         instrument_id: AssetRiskSettings(

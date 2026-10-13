@@ -18,6 +18,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from src.market_data.costs import load_cost_assumptions  # noqa: E402
 from src.portfolio_simulation import (  # noqa: E402
     build_execution_signals,
+    daily_strategy_returns_after_costs,
     simulate_portfolio,
 )
 from src.portfolio_sizing import (  # noqa: E402
@@ -39,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-file",
         type=Path,
-        default=Path("data/canonical/market_bars_30m_training_validation.csv"),
+        default=Path("data/canonical/market_bars_30m_simulation_live_to_date.csv"),
     )
     parser.add_argument(
         "--fx-file",
@@ -140,11 +141,21 @@ def main() -> None:
         fx_rates=fx_rates,
     )
 
+    cost_assumptions = load_cost_assumptions(args.cost_config)
+    execution_signals, signal_output, unavailable = build_execution_signals(
+        canonical,
+        strategy_config,
+        assets,
+        end,
+        project_root=PROJECT_ROOT,
+        allow_missing_external=args.allow_missing_external,
+    )
+    selected_sizing_method = str(
+        args.sizing_method
+        or sizing_config.get("method", "capped_inverse_volatility")
+    )
     policy = InverseVolatilitySettings(
-        method=str(
-            args.sizing_method
-            or sizing_config.get("method", "capped_inverse_volatility")
-        ),
+        method=selected_sizing_method,
         lookback_observations=int(sizing_config.get("lookback_observations", 60)),
         minimum_observations=int(sizing_config.get("minimum_observations", 40)),
         target_gross_exposure=float(
@@ -154,7 +165,40 @@ def main() -> None:
         rebalance_frequency=str(
             sizing_config.get("rebalance_frequency", "weekly")
         ),
+        confidence_full_observations=int(
+            sizing_config.get("confidence_full_observations", 252)
+        ),
+        confidence_power=float(sizing_config.get("confidence_power", 0.5)),
+        performance_lookback_observations=int(
+            sizing_config.get("performance_lookback_observations", 60)
+        ),
+        minimum_performance_observations=int(
+            sizing_config.get("minimum_performance_observations", 20)
+        ),
+        performance_sharpe_scale=float(
+            sizing_config.get("performance_sharpe_scale", 2.0)
+        ),
+        performance_multiplier_floor=float(
+            sizing_config.get("performance_multiplier_floor", 0.25)
+        ),
+        performance_multiplier_ceiling=float(
+            sizing_config.get("performance_multiplier_ceiling", 1.5)
+        ),
     )
+    strategy_returns = None
+    if (
+        selected_sizing_method
+        == "capped_strategy_performance_adjusted_inverse_volatility"
+    ):
+        strategy_returns = daily_strategy_returns_after_costs(
+            canonical,
+            execution_signals,
+            fx_rates,
+            sizing_config,
+            cost_assumptions,
+            end,
+            slippage_bps=args.slippage_bps,
+        )
     asset_settings = {
         asset: AssetRiskSettings(
             annualization_periods=int(configured_assets[asset]["annualization_periods"]),
@@ -168,18 +212,11 @@ def main() -> None:
         rebalance_dates(start, end, policy.rebalance_frequency),
         policy,
         asset_settings,
+        strategy_returns=strategy_returns,
     )
     if risk_weights.empty:
         raise ValueError("No sizing date has sufficient history for every asset")
 
-    execution_signals, signal_output, unavailable = build_execution_signals(
-        canonical,
-        strategy_config,
-        assets,
-        end,
-        project_root=PROJECT_ROOT,
-        allow_missing_external=args.allow_missing_external,
-    )
     artifacts = simulate_portfolio(
         canonical,
         execution_signals,
@@ -188,7 +225,7 @@ def main() -> None:
         risk_weights,
         fx_rates,
         sizing_config,
-        load_cost_assumptions(args.cost_config),
+        cost_assumptions,
         start,
         end,
         slippage_bps=args.slippage_bps,
@@ -204,6 +241,10 @@ def main() -> None:
     volatility_diagnostics.to_csv(
         args.output_dir / "volatility_diagnostics.csv", index=False
     )
+    if strategy_returns is not None:
+        strategy_returns.reset_index().to_csv(
+            args.output_dir / "strategy_return_history.csv", index=False
+        )
     conversion_audit.to_csv(args.output_dir / "currency_conversion.csv", index=False)
     artifacts.signals.to_csv(args.output_dir / "execution_signals.csv", index=False)
     artifacts.decisions.to_csv(args.output_dir / "decisions.csv", index=False)
@@ -237,7 +278,19 @@ def main() -> None:
         "risk_rebalance_frequency": policy.rebalance_frequency,
         "weighting_method": policy.method,
         "maximum_asset_weight": configured_maximum_weight(sizing_config, assets[0]),
+        "target_weight_change_threshold": float(
+            sizing_config.get("target_weight_change_threshold", 0.0)
+        ),
+        "resize_existing_positions_on_rebalance": bool(
+            sizing_config.get("resize_existing_positions_on_rebalance", True)
+        ),
         "strategy_inactive_allocation": sizing_config.get("inactive_allocation"),
+        "strategy_performance_measure": sizing_config.get("performance_measure"),
+        "strategy_performance_reference_notional_base": float(
+            sizing_config.get(
+                "strategy_performance_reference_notional_base", 100_000.0
+            )
+        ),
         "force_liquidation_at_end": False,
         "valuation_prices": "raw_close_converted_point_in_time_to_usd",
         "execution_prices": "next_eligible_raw_open_converted_point_in_time_to_usd",

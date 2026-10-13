@@ -449,6 +449,132 @@ def _asset_summary(
     return pd.DataFrame(rows)
 
 
+def daily_strategy_returns_after_costs(
+    canonical: pd.DataFrame,
+    execution_signals: Mapping[str, pd.Series],
+    fx_rates: pd.DataFrame,
+    sizing_config: Mapping[str, Any],
+    cost_assumptions: CostAssumptions,
+    end: pd.Timestamp,
+    *,
+    slippage_bps: float = 0.0,
+) -> pd.DataFrame:
+    """Build daily unit-strategy returns using only executable targets.
+
+    Positions change at each bar's raw open. Adjusted prices supply the return
+    ratios, while commissions are evaluated at a configurable reference
+    notional so minimum and per-share fees use the project's broker model.
+    """
+    configured_assets = sizing_config["assets"]
+    assets = list(configured_assets)
+    reference_notional = float(
+        sizing_config.get("strategy_performance_reference_notional_base", 100_000.0)
+    )
+    if reference_notional <= 0 or not np.isfinite(reference_notional):
+        raise ValueError(
+            "strategy_performance_reference_notional_base must be positive"
+        )
+    static_rates = {
+        str(currency).upper(): float(rate)
+        for currency, rate in sizing_config.get("static_rates_to_base", {}).items()
+    }
+    static_rates.setdefault("USD", 1.0)
+    quote_currencies = {
+        asset: str(configured_assets[asset]["quote_currency"]).upper()
+        for asset in assets
+    }
+    cost_model = BaseCurrencyProjectCostModel(
+        cost_assumptions,
+        quote_currencies,
+        base_currency=str(sizing_config.get("base_currency", "USD")),
+        slippage_bps=slippage_bps,
+    )
+    outputs: list[pd.Series] = []
+
+    for asset in assets:
+        required = [
+            "bar_open_time_utc",
+            "open",
+            "close",
+            "adjusted_close",
+        ]
+        if "session_date_local" in canonical.columns:
+            required.append("session_date_local")
+        bars = canonical.loc[
+            canonical["instrument_id"].eq(asset)
+            & canonical["bar_open_time_utc"].lt(end),
+            required,
+        ].copy()
+        if bars.empty:
+            raise ValueError(f"No strategy-return history exists for {asset}")
+        bars = bars.sort_values("bar_open_time_utc").set_index("bar_open_time_utc")
+        rates = _rates_for_bars(
+            pd.DatetimeIndex(bars.index),
+            asset,
+            quote_currencies[asset],
+            static_rates,
+            fx_rates,
+        )
+        raw_open = pd.to_numeric(bars["open"], errors="coerce")
+        raw_close = pd.to_numeric(bars["close"], errors="coerce")
+        adjusted_close = pd.to_numeric(bars["adjusted_close"], errors="coerce")
+        invalid = (
+            raw_open.isna()
+            | raw_close.isna()
+            | adjusted_close.isna()
+            | raw_open.le(0)
+            | raw_close.le(0)
+            | adjusted_close.le(0)
+        )
+        if invalid.any():
+            raise ValueError(
+                f"Strategy-return history contains {int(invalid.sum())} invalid "
+                f"{asset} bars"
+            )
+        adjustment_factor = adjusted_close / raw_close
+        adjusted_open = raw_open * adjustment_factor
+        targets = execution_signals[asset].reindex(bars.index)
+        if targets.isna().any():
+            raise ValueError(f"Strategy returns do not align with every {asset} bar")
+        targets = targets.astype("float64")
+        prior_targets = targets.shift(1).fillna(0.0)
+        prior_close = adjusted_close.shift(1)
+        overnight = (adjusted_open / prior_close - 1.0).fillna(0.0)
+        intrabar = adjusted_close / adjusted_open - 1.0
+        gross_factor = (1.0 + prior_targets * overnight) * (
+            1.0 + targets * intrabar
+        )
+        bar_returns = gross_factor - 1.0
+
+        turnover = (targets - prior_targets).abs()
+        for timestamp in turnover.index[turnover.gt(0)]:
+            rate = float(rates.loc[timestamp])
+            open_base = float(raw_open.loc[timestamp] * rate)
+            quantity = float(
+                turnover.loc[timestamp] * reference_notional / open_base
+            )
+            cost_model.set_rates({asset: rate})
+            _, fee, slippage = cost_model.apply(asset, quantity, open_base)
+            bar_returns.loc[timestamp] -= (fee + slippage) / reference_notional
+
+        if "session_date_local" in bars.columns:
+            session_date = pd.to_datetime(
+                bars["session_date_local"], errors="coerce", utc=True
+            )
+        else:
+            session_date = pd.Series(bars.index.normalize(), index=bars.index)
+        if session_date.isna().any():
+            raise ValueError(f"Invalid session dates in {asset} strategy history")
+        daily = (1.0 + bar_returns).groupby(session_date).prod() - 1.0
+        daily.index = pd.DatetimeIndex(daily.index).normalize()
+        daily.name = asset
+        outputs.append(daily.astype("float64"))
+
+    result = pd.concat(outputs, axis=1).sort_index()
+    result.index.name = "session_date"
+    return result
+
+
 def simulate_portfolio(
     canonical: pd.DataFrame,
     execution_signals: Mapping[str, pd.Series],
@@ -534,6 +660,29 @@ def simulate_portfolio(
     target_gross_exposure = float(
         sizing_config.get("target_gross_exposure", 0.95)
     )
+    inactive_allocation = str(
+        sizing_config.get(
+            "inactive_allocation",
+            "redistribute_to_active_assets_subject_to_common_cap",
+        )
+    )
+    supported_inactive_allocation = {
+        "redistribute_to_active_assets_subject_to_common_cap",
+        "hold_as_cash",
+    }
+    if inactive_allocation not in supported_inactive_allocation:
+        raise ValueError(
+            "inactive_allocation must be one of "
+            f"{sorted(supported_inactive_allocation)}"
+        )
+    target_weight_change_threshold = float(
+        sizing_config.get("target_weight_change_threshold", 0.0)
+    )
+    if not 0 <= target_weight_change_threshold <= 1:
+        raise ValueError("target_weight_change_threshold must be in [0, 1]")
+    resize_existing_positions = bool(
+        sizing_config.get("resize_existing_positions_on_rebalance", True)
+    )
     last_signal: dict[str, float | None] = {asset: None for asset in assets}
     last_target_weight: dict[str, float | None] = {
         asset: None for asset in assets
@@ -575,29 +724,35 @@ def simulate_portfolio(
             asset: float(risk_weights.at[rebalance_time, asset])
             for asset in assets
         }
-        active_scores = pd.Series(
-            {
+        if inactive_allocation == "hold_as_cash":
+            portfolio_target_weights = {
                 asset: base_risk_weights[asset] * latest_signal[asset]
                 for asset in assets
-                if latest_signal[asset] > 0
-            },
-            dtype="float64",
-        )
-        if active_scores.empty:
-            portfolio_target_weights = {asset: 0.0 for asset in assets}
-        else:
-            active_target_weights = allocate_capped_scores(
-                active_scores,
-                target_gross_exposure,
-                {
-                    asset: maximum_weights[asset]
-                    for asset in active_scores.index
-                },
-            )
-            portfolio_target_weights = {
-                asset: float(active_target_weights.get(asset, 0.0))
-                for asset in assets
             }
+        else:
+            active_scores = pd.Series(
+                {
+                    asset: base_risk_weights[asset] * latest_signal[asset]
+                    for asset in assets
+                    if latest_signal[asset] > 0
+                },
+                dtype="float64",
+            )
+            if active_scores.empty:
+                portfolio_target_weights = {asset: 0.0 for asset in assets}
+            else:
+                active_target_weights = allocate_capped_scores(
+                    active_scores,
+                    target_gross_exposure,
+                    {
+                        asset: maximum_weights[asset]
+                        for asset in active_scores.index
+                    },
+                )
+                portfolio_target_weights = {
+                    asset: float(active_target_weights.get(asset, 0.0))
+                    for asset in assets
+                }
         equity_at_open = float(portfolio.equity(opens))
         planned: list[dict[str, Any]] = []
 
@@ -607,10 +762,21 @@ def simulate_portfolio(
             target_weight = portfolio_target_weights[asset]
             rebalance_changed = last_rebalance[asset] != rebalance_time
             signal_changed = last_signal[asset] != signal
-            target_changed = last_target_weight[asset] != target_weight
+            target_changed = (
+                last_target_weight[asset] is None
+                or abs(float(last_target_weight[asset]) - target_weight)
+                >= target_weight_change_threshold
+            )
             before = float(portfolio.position(asset))
             desired = before
-            if rebalance_changed or signal_changed or target_changed:
+            should_resize = (
+                signal_changed
+                or (
+                    target_changed
+                    and (resize_existing_positions or before == 0.0)
+                )
+            )
+            if should_resize:
                 desired = target_weight * equity_at_open / opens[asset]
                 desired = np.floor(desired / steps[asset]) * steps[asset]
             planned.append(
@@ -624,6 +790,8 @@ def simulate_portfolio(
                     "rebalance_changed": rebalance_changed,
                     "signal_changed": signal_changed,
                     "target_changed": target_changed,
+                    "position_resize_enabled": resize_existing_positions,
+                    "position_resize_triggered": should_resize,
                     "quantity_before": before,
                     "desired_quantity": float(desired),
                     "open_usd": opens[asset],
