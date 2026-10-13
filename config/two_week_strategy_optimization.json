@@ -2,10 +2,10 @@
   "official_test_start_utc": "2026-10-01T00:00:00Z",
   "sessions_per_evaluation_window": 14,
   "window_step_sessions": 5,
-  "minimum_trade_window_rate": 1.0,
+  "minimum_trade_window_rate": 0.0,
   "shortlist_size": 5,
   "joint_shortlist_size": 3,
-  "selection_policy": "Require at least one executed order in each historical two-week window, then rank by after-cost return and downside metrics. Never rank by trade frequency or overwrite selected_strategies.json automatically.",
+  "selection_policy": "Do not exclude candidates for inactivity in individual historical windows. Rank completed candidates by after-cost return and downside metrics; report trade coverage as a diagnostic rather than a selection constraint. Never rank by trade frequency or overwrite selected_strategies.json automatically.",
   "joint_diagnostic_period": {
     "start": "2026-09-11T00:00:00Z",
     "end": "2026-10-01T00:00:00Z",

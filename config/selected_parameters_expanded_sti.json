@@ -1,0 +1,46 @@
+{
+  "configuration_status": "post_october_observation_alternative_for_comparison",
+  "signal_timing": "decision_after_bar_close_execute_at_next_eligible_bar_open",
+  "selection_note": "The grid and all optimization diagnostics exclude October data, but this alternative was adopted for comparison after partial October performance had already been observed. It does not replace the frozen official configuration.",
+  "assets": {
+    "spy_usd": {
+      "signal_source": "rule_based",
+      "strategy": "momentum",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "spy_usd__momentum_0033",
+      "parameters": {
+        "fast_window": 4,
+        "slow_window": 16,
+        "momentum_lookback": 8,
+        "entry_threshold": 0.0025,
+        "exit_threshold": 0.0
+      },
+      "selection_source": "frozen_official_pre_october_selection"
+    },
+    "sti_es3_sgd": {
+      "signal_source": "rule_based",
+      "strategy": "mean_reversion",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "sti_es3_sgd__mean_reversion_0052",
+      "parameters": {
+        "window": 16,
+        "entry_z_score": -1.25,
+        "exit_z_score": 0.25,
+        "minimum_holding_bars": 4,
+        "cooldown_bars": 4,
+        "maximum_holding_bars": 20
+      },
+      "selection_source": "expanded_pre_october_grid_and_known_september_joint_diagnostic"
+    },
+    "btc_usdt": {
+      "signal_source": "external_csv",
+      "decision_interval_minutes": 30,
+      "path": "data/signals/btc_signals.csv",
+      "status": "awaiting_teammate",
+      "required_columns": [
+        "bar_open_time_utc",
+        "target_position"
+      ]
+    }
+  }
+}

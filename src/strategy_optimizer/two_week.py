@@ -17,6 +17,7 @@ from src.market_data.costs import CostAssumptions
 from src.portfolio_simulation import (
     PortfolioSimulationArtifacts,
     build_execution_signals,
+    daily_strategy_returns_after_costs,
     simulate_portfolio,
 )
 from src.portfolio_sizing import (
@@ -463,7 +464,7 @@ def screen_candidates(
     *,
     slippage_bps: float = 0.0,
     progress_every: int = 10,
-    minimum_trade_window_rate: float = 1.0,
+    minimum_trade_window_rate: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run each candidate once and derive inexpensive two-week diagnostics."""
     candidate_list = list(candidates)
@@ -574,7 +575,7 @@ def evaluate_independent_windows(
     project_root: Path,
     *,
     slippage_bps: float = 0.0,
-    minimum_trade_window_rate: float = 1.0,
+    minimum_trade_window_rate: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Reset cash and positions for every shortlisted two-week window."""
     rows: list[dict[str, Any]] = []
@@ -665,6 +666,7 @@ def _risk_weights_for_joint_simulation(
     start: pd.Timestamp,
     end: pd.Timestamp,
     sizing_method: str,
+    strategy_returns: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     configured_assets = sizing_config["assets"]
     assets = list(configured_assets)
@@ -687,6 +689,25 @@ def _risk_weights_for_joint_simulation(
         target_gross_exposure=float(sizing_config.get("target_gross_exposure", 0.95)),
         volatility_floor=float(sizing_config.get("volatility_floor", 0.05)),
         rebalance_frequency=str(sizing_config.get("rebalance_frequency", "weekly")),
+        confidence_full_observations=int(
+            sizing_config.get("confidence_full_observations", 252)
+        ),
+        confidence_power=float(sizing_config.get("confidence_power", 0.5)),
+        performance_lookback_observations=int(
+            sizing_config.get("performance_lookback_observations", 60)
+        ),
+        minimum_performance_observations=int(
+            sizing_config.get("minimum_performance_observations", 20)
+        ),
+        performance_sharpe_scale=float(
+            sizing_config.get("performance_sharpe_scale", 2.0)
+        ),
+        performance_multiplier_floor=float(
+            sizing_config.get("performance_multiplier_floor", 0.25)
+        ),
+        performance_multiplier_ceiling=float(
+            sizing_config.get("performance_multiplier_ceiling", 1.5)
+        ),
     )
     settings = {
         asset: AssetRiskSettings(
@@ -701,6 +722,7 @@ def _risk_weights_for_joint_simulation(
         rebalance_dates(start, end, policy.rebalance_frequency),
         policy,
         settings,
+        strategy_returns=strategy_returns,
     )
     if weights.empty:
         raise ValueError("No joint portfolio weights are ready for the diagnostic")
@@ -723,9 +745,15 @@ def run_joint_diagnostics(
     slippage_bps: float = 0.0,
 ) -> pd.DataFrame:
     """Replay finalist pairs using the actual shared-USD portfolio engine."""
-    weights = _risk_weights_for_joint_simulation(
-        canonical, fx_rates, sizing_config, start, end, sizing_method
+    strategy_performance_sizing = (
+        sizing_method
+        == "capped_strategy_performance_adjusted_inverse_volatility"
     )
+    weights = None
+    if not strategy_performance_sizing:
+        weights = _risk_weights_for_joint_simulation(
+            canonical, fx_rates, sizing_config, start, end, sizing_method
+        )
     assets = list(sizing_config["assets"])
     rows: list[dict[str, Any]] = []
     pairs = list(itertools.product(spy_candidates, sti_candidates))
@@ -751,6 +779,27 @@ def run_joint_diagnostics(
             project_root=project_root,
             allow_missing_external=True,
         )
+        if strategy_performance_sizing:
+            strategy_returns = daily_strategy_returns_after_costs(
+                canonical,
+                signals,
+                fx_rates,
+                sizing_config,
+                costs,
+                end,
+                slippage_bps=slippage_bps,
+            )
+            weights = _risk_weights_for_joint_simulation(
+                canonical,
+                fx_rates,
+                sizing_config,
+                start,
+                end,
+                sizing_method,
+                strategy_returns=strategy_returns,
+            )
+        if weights is None:
+            raise ValueError("No joint portfolio weights are available")
         artifacts = simulate_portfolio(
             canonical,
             signals,

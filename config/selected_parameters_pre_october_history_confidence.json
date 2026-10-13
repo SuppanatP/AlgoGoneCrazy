@@ -1,0 +1,46 @@
+{
+  "configuration_status": "pre_october_data_only_training_validation_selection",
+  "signal_timing": "decision_after_bar_close_execute_at_next_eligible_bar_open",
+  "selection_note": "The full SPY grid and expanded STI grid were screened on their configured pre-October training windows without a per-window trading eligibility threshold. The final pair was selected by the highest after-cost September joint validation return under history-confidence sizing. The reconstruction was executed after partial October performance had been observed, but no October rows were used for candidate ranking or pair selection.",
+  "assets": {
+    "spy_usd": {
+      "signal_source": "rule_based",
+      "strategy": "momentum",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "spy_usd__momentum_0041",
+      "parameters": {
+        "fast_window": 8,
+        "slow_window": 16,
+        "momentum_lookback": 8,
+        "entry_threshold": 0.0025,
+        "exit_threshold": 0.0
+      },
+      "selection_source": "pre_october_training_shortlist_and_september_joint_validation"
+    },
+    "sti_es3_sgd": {
+      "signal_source": "rule_based",
+      "strategy": "mean_reversion",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "sti_es3_sgd__mean_reversion_0052",
+      "parameters": {
+        "window": 16,
+        "entry_z_score": -1.25,
+        "exit_z_score": 0.25,
+        "minimum_holding_bars": 4,
+        "cooldown_bars": 4,
+        "maximum_holding_bars": 20
+      },
+      "selection_source": "pre_october_expanded_training_grid_and_september_joint_validation"
+    },
+    "btc_usdt": {
+      "signal_source": "external_csv",
+      "decision_interval_minutes": 30,
+      "path": "data/signals/btc_signals.csv",
+      "status": "awaiting_teammate",
+      "required_columns": [
+        "bar_open_time_utc",
+        "target_position"
+      ]
+    }
+  }
+}

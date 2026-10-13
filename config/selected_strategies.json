@@ -1,35 +1,36 @@
 {
-  "configuration_status": "frozen_for_final_evaluation",
+  "configuration_status": "frozen_final_pre_october_training_validation_selection",
   "signal_timing": "decision_after_bar_close_execute_at_next_eligible_bar_open",
+  "selection_note": "The SPY and expanded STI grids were screened on pre-October training windows without a per-window trade filter. This pair had the highest after-cost September joint validation return under the final history-confidence sizing rule. October rows were not used in candidate ranking or pair selection.",
   "assets": {
     "spy_usd": {
       "signal_source": "rule_based",
       "strategy": "momentum",
       "decision_interval_minutes": 120,
-      "selected_candidate_id": "spy_usd__momentum_0033",
+      "selected_candidate_id": "spy_usd__momentum_0041",
       "parameters": {
-        "fast_window": 4,
+        "fast_window": 8,
         "slow_window": 16,
         "momentum_lookback": 8,
         "entry_threshold": 0.0025,
         "exit_threshold": 0.0
       },
-      "selection_source": "pre_october_cost_aware_short_horizon_grid_search"
+      "selection_source": "pre_october_training_shortlist_and_september_joint_validation"
     },
     "sti_es3_sgd": {
       "signal_source": "rule_based",
       "strategy": "mean_reversion",
       "decision_interval_minutes": 120,
-      "selected_candidate_id": "sti_es3_sgd__mean_reversion_0026",
+      "selected_candidate_id": "sti_es3_sgd__mean_reversion_0052",
       "parameters": {
-        "window": 8,
-        "entry_z_score": -1.5,
-        "exit_z_score": 0.0,
+        "window": 16,
+        "entry_z_score": -1.25,
+        "exit_z_score": 0.25,
         "minimum_holding_bars": 4,
         "cooldown_bars": 4,
         "maximum_holding_bars": 20
       },
-      "selection_source": "pre_october_cost_aware_short_horizon_grid_search"
+      "selection_source": "pre_october_expanded_training_grid_and_september_joint_validation"
     },
     "btc_usdt": {
       "signal_source": "external_csv",

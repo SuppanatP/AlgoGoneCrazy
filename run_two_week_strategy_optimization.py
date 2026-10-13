@@ -136,7 +136,7 @@ def main() -> None:
     if sessions_per_window < 1 or window_step_sessions < 1:
         raise ValueError("Evaluation window and step sessions must be positive")
     minimum_trade_window_rate = float(
-        config.get("minimum_trade_window_rate", 1.0)
+        config.get("minimum_trade_window_rate", 0.0)
     )
     if not 0 <= minimum_trade_window_rate <= 1:
         raise ValueError("minimum_trade_window_rate must be between zero and one")
