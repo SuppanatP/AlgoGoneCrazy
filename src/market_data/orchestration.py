@@ -38,6 +38,9 @@ class WorkflowConfig:
     assets: tuple[AssetRun, ...]
     canonical_output_file: Path
     canonical_summary_file: Path
+    historical_input_directories: tuple[Path, ...] = ()
+    combined_canonical_output_file: Path | None = None
+    combined_canonical_summary_file: Path | None = None
 
 
 def _parse_utc(value: object, field_name: str) -> datetime:
@@ -73,10 +76,12 @@ def _resolve_range(
             raise ValueError(
                 f"{label} cannot provide both start and lookback_days"
             )
-        if end_value is None:
-            raise ValueError(f"{label} must provide end when start is used")
         start_utc = _parse_utc(start_value, f"{label}.start")
-        end_utc = _parse_utc(end_value, f"{label}.end")
+        end_utc = (
+            _parse_utc(end_value, f"{label}.end")
+            if end_value is not None
+            else shared_default_end_utc
+        )
     else:
         if lookback_value is None:
             raise ValueError(
@@ -167,6 +172,33 @@ def load_workflow_config(path: Path) -> WorkflowConfig:
             )
         )
 
+    raw_historical_directories = payload.get("historical_input_dirs", [])
+    if not isinstance(raw_historical_directories, list) or not all(
+        isinstance(value, str) and value.strip()
+        for value in raw_historical_directories
+    ):
+        raise ValueError("historical_input_dirs must be a list of non-empty paths")
+    historical_input_directories = tuple(
+        Path(value) for value in raw_historical_directories
+    )
+    if len(set(historical_input_directories)) != len(
+        historical_input_directories
+    ):
+        raise ValueError("historical_input_dirs must not contain duplicates")
+
+    combined_output = payload.get("combined_canonical_output_file")
+    combined_summary = payload.get("combined_canonical_summary_file")
+    combined_requested = bool(historical_input_directories)
+    if combined_requested and (combined_output is None or combined_summary is None):
+        raise ValueError(
+            "combined canonical output and summary paths are required when "
+            "historical_input_dirs are configured"
+        )
+    if not combined_requested and (combined_output is not None or combined_summary is not None):
+        raise ValueError(
+            "historical_input_dirs are required for combined canonical output"
+        )
+
     return WorkflowConfig(
         assets=tuple(assets),
         canonical_output_file=Path(
@@ -185,6 +217,13 @@ def load_workflow_config(path: Path) -> WorkflowConfig:
                 )
             )
         ),
+        historical_input_directories=historical_input_directories,
+        combined_canonical_output_file=(
+            Path(str(combined_output)) if combined_output is not None else None
+        ),
+        combined_canonical_summary_file=(
+            Path(str(combined_summary)) if combined_summary is not None else None
+        ),
     )
 
 
@@ -195,8 +234,10 @@ def _asset_label(asset: AssetRun) -> str:
 def run_market_data_workflow(config: WorkflowConfig) -> ConsolidationResult:
     """Run strict stage barriers and stop immediately when any call fails."""
     asset_count = len(config.assets)
+    has_combined_output = config.combined_canonical_output_file is not None
+    stage_count = 5 if has_combined_output else 4
 
-    print("Stage 1/4: ingestion")
+    print(f"Stage 1/{stage_count}: ingestion")
     for index, asset in enumerate(config.assets, start=1):
         print(f"[{index}/{asset_count}] Ingesting {_asset_label(asset)}")
         run_ingestion(
@@ -206,21 +247,38 @@ def run_market_data_workflow(config: WorkflowConfig) -> ConsolidationResult:
             instruments=(asset.instrument,),
         )
 
-    print("Stage 2/4: aggregation")
+    print(f"Stage 2/{stage_count}: aggregation")
     for index, asset in enumerate(config.assets, start=1):
         print(f"[{index}/{asset_count}] Aggregating {_asset_label(asset)}")
         run_aggregation(asset.output_directory, asset.output_directory)
 
-    print("Stage 3/4: backfill")
+    print(f"Stage 3/{stage_count}: backfill")
     for index, asset in enumerate(config.assets, start=1):
         print(f"[{index}/{asset_count}] Backfilling {_asset_label(asset)}")
         run_backfill(asset.output_directory, asset.output_directory)
 
-    print("Stage 4/4: consolidation")
-    return run_consolidation(
+    print(f"Stage 4/{stage_count}: live-period consolidation")
+    live_result = run_consolidation(
         [asset.output_directory for asset in config.assets],
         config.canonical_output_file,
         config.canonical_summary_file,
+        required_instruments={
+            asset.instrument.instrument_id for asset in config.assets
+        },
+    )
+    if not has_combined_output:
+        return live_result
+
+    if config.combined_canonical_summary_file is None:
+        raise ValueError("Combined canonical summary path is missing")
+    print("Stage 5/5: history-plus-live consolidation")
+    return run_consolidation(
+        [
+            *config.historical_input_directories,
+            *(asset.output_directory for asset in config.assets),
+        ],
+        config.combined_canonical_output_file,
+        config.combined_canonical_summary_file,
         required_instruments={
             asset.instrument.instrument_id for asset in config.assets
         },

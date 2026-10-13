@@ -1,0 +1,30 @@
+{
+  "output_root": "data/staging/october_live",
+  "canonical_output_file": "data/canonical/market_bars_30m_october_live.csv",
+  "canonical_summary_file": "data/canonical/consolidation_summary_october_live.json",
+  "historical_input_dirs": [
+    "data/staging/alpaca_market_data/SPY",
+    "data/staging/backtest_cutoff/alpaca_market_data/SPY",
+    "data/staging/binance_spot/BTCUSDT",
+    "data/staging/combined_history/yahoo_finance/ES3_SI"
+  ],
+  "combined_canonical_output_file": "data/canonical/market_bars_30m_simulation_live_to_date.csv",
+  "combined_canonical_summary_file": "data/canonical/consolidation_summary_simulation_live_to_date.json",
+  "assets": [
+    {
+      "provider": "alpaca",
+      "symbol": "SPY",
+      "start": "2026-10-01T00:00:00Z"
+    },
+    {
+      "provider": "binance",
+      "symbol": "BTCUSDT",
+      "start": "2026-10-01T00:00:00Z"
+    },
+    {
+      "provider": "yahoo",
+      "symbol": "ES3.SI",
+      "start": "2026-10-01T00:00:00Z"
+    }
+  ]
+}
