@@ -390,127 +390,6 @@ pairs are then compared jointly on the September pre-October validation period.
 The run never reads October observations and never updates a selected-strategy
 configuration automatically.
 
-Run the same expanded grid under the separate confidence/performance-adjusted
-sizing experiment:
-
-```bash
-python run_two_week_strategy_optimization.py \
-  --input-file data/canonical/market_bars_30m_training_validation.csv \
-  --config-file config/sti_mean_reversion_expanded_optimization.json \
-  --selected-strategies config/selected_parameters_expanded_sti.json \
-  --sizing-config config/portfolio_sizing_performance_adjusted.json \
-  --output-dir results/sti_mean_reversion_expanded_performance_adjusted \
-  --progress-every 10
-```
-
-This writes to a new result directory and does not replace either the original
-expanded-grid results or the frozen official configuration. The current
-pre-October joint diagnostic selected STI candidate `0026` from the expanded
-grid: a 12-bar lookback, entry Z-score `-1.25`, exit Z-score `-0.25`, four-bar
-minimum hold and cooldown, and 20-bar maximum hold. That manually recorded
-experimental selection is stored in
-`config/selected_parameters_expanded_sti_performance_adjusted.json`.
-
-Replay the separate selection on the available October data without requiring
-the still-pending BTC signal file:
-
-```bash
-python run_portfolio_simulation.py \
-  --input-file data/canonical/market_bars_30m_simulation_live_to_date.csv \
-  --strategy-config config/selected_parameters_expanded_sti_performance_adjusted.json \
-  --sizing-config config/portfolio_sizing_performance_adjusted.json \
-  --start 2026-10-01 \
-  --end 2026-10-13 \
-  --allow-missing-external \
-  --output-dir results/portfolio_simulation_october_live_to_date_expanded_sti_performance_adjusted
-```
-
-The result directory is separate and ignored by Git. This is a
-post-October-observation experiment, not untouched validation and not an
-automatic replacement for `config/selected_strategies.json`. BTC remains an
-unchanged external-signal interface and receives no orders in this temporary
-run.
-
-To test lower STI participation without imposing an STI-specific fixed cap,
-run the same expanded grid with inactive strategy budgets retained as cash:
-
-```bash
-python run_two_week_strategy_optimization.py \
-  --input-file data/canonical/market_bars_30m_training_validation.csv \
-  --config-file config/sti_mean_reversion_expanded_optimization.json \
-  --selected-strategies config/selected_parameters_expanded_sti.json \
-  --sizing-config config/portfolio_sizing_performance_adjusted_cash_retention.json \
-  --output-dir results/sti_mean_reversion_expanded_performance_adjusted_cash_retention \
-  --progress-every 10
-```
-
-The best known-September joint diagnostic retained expanded STI candidate
-`0052`; no newly tested candidate improved the joint result. Its separately
-labelled replay configuration is
-`config/selected_parameters_expanded_sti_cash_retention.json`. Replay it on the
-available October snapshot with:
-
-```bash
-python run_portfolio_simulation.py \
-  --input-file data/canonical/market_bars_30m_simulation_live_to_date.csv \
-  --strategy-config config/selected_parameters_expanded_sti_cash_retention.json \
-  --sizing-config config/portfolio_sizing_performance_adjusted_cash_retention.json \
-  --start 2026-10-01 \
-  --end 2026-10-13 \
-  --allow-missing-external \
-  --output-dir results/portfolio_simulation_october_live_to_date_expanded_sti_cash_retention
-```
-
-This policy multiplies each strategic risk weight by its signal and leaves the
-unused portion in cash. It does not renormalize SPY, STI, or BTC to consume the
-unused allocation. The output remains a separate post-observation diagnostic,
-not untouched validation.
-
-The strategy-performance sizing experiment replaces the underlying asset's
-recent Sharpe multiplier with the configured strategy's own trailing,
-after-commission daily-return Sharpe. Run the expanded diagnostic with:
-
-```bash
-python run_two_week_strategy_optimization.py \
-  --input-file data/canonical/market_bars_30m_training_validation.csv \
-  --config-file config/sti_mean_reversion_expanded_optimization.json \
-  --selected-strategies config/selected_parameters_expanded_sti.json \
-  --sizing-config config/portfolio_sizing_strategy_performance_cash_retention.json \
-  --output-dir results/sti_mean_reversion_expanded_strategy_performance_cash_retention \
-  --progress-every 10
-```
-
-Each candidate's weekly score is its inverse volatility multiplied by its
-sample-history confidence and a clipped strategy-performance multiplier. The
-multiplier is `clip(1 + strategy Sharpe / 2, 0.5, 1.5)`, calculated from the
-last 60 available strategy-session returns strictly before the rebalance. The
-return history uses executable positions, adjusted-price returns, the project
-broker commissions, and a USD 100,000 reference sleeve for minimum/per-share
-fee calculation. The resulting scores are allocated within the 95% strategic
-budget and common 75% cap; inactive signal allocations subsequently remain in
-cash.
-
-The best known-September diagnostic again retained expanded STI candidate
-`0052`. Its separate replay configuration is
-`config/selected_parameters_expanded_sti_strategy_performance.json`. Run the
-October snapshot with:
-
-```bash
-python run_portfolio_simulation.py \
-  --input-file data/canonical/market_bars_30m_simulation_live_to_date.csv \
-  --strategy-config config/selected_parameters_expanded_sti_strategy_performance.json \
-  --sizing-config config/portfolio_sizing_strategy_performance_cash_retention.json \
-  --start 2026-10-01 \
-  --end 2026-10-13 \
-  --allow-missing-external \
-  --output-dir results/portfolio_simulation_october_live_to_date_strategy_performance_cash_retention
-```
-
-The simulation additionally writes `strategy_return_history.csv` for auditing
-the values available to each weekly sizing decision. This remains a
-post-October-observation comparison and does not replace the official
-configuration automatically.
-
 The simpler history-confidence experiment deliberately removes every return or
 Sharpe multiplier. It uses only inverse volatility and the amount of history
 available before each rebalance:
@@ -529,7 +408,7 @@ python run_two_week_strategy_optimization.py \
   --input-file data/canonical/market_bars_30m_training_validation.csv \
   --config-file config/sti_mean_reversion_expanded_optimization.json \
   --selected-strategies config/strategy_search_baseline.json \
-  --sizing-config config/portfolio_sizing_history_confidence_cash_retention.json \
+  --sizing-config config/portfolio_sizing.json \
   --output-dir results/pre_october_joint_history_confidence_optimization \
   --progress-every 10
 ```
@@ -582,36 +461,11 @@ strategy entry. TLT is not part of the current portfolio. Every weight uses
 adjusted closing prices strictly before its rebalance date, so current or
 future prices cannot leak into the sizing decision.
 
-The separate experimental configuration
-`config/portfolio_sizing_performance_adjusted.json` keeps the same
-inverse-volatility foundation, then multiplies each asset's score by two
-strictly backward-looking terms: a history-confidence factor and a clipped
-60-session adjusted-price Sharpe factor. It uses a common 75% cap and ignores
-target-weight changes smaller than five percentage points unless the signal
-itself changes. These choices are intended to favor assets with more evidence
-and stronger recent risk-adjusted performance. They remain an alternative
-experiment rather than the final sizing method.
-
-The additional experimental configuration
-`config/portfolio_sizing_performance_adjusted_cash_retention.json` changes only
-the inactive-allocation policy. With `hold_as_cash`, an inactive strategy's
-budget stays in cash rather than being transferred to another active strategy.
-For probabilistic signals between zero and one, the same rule scales the
-strategic weight proportionally. Cash retention is also used by the final
-history-confidence configuration.
-
-`config/portfolio_sizing_strategy_performance_cash_retention.json` retains the
-same cash policy but bases the performance multiplier on the strategy rather
-than the underlying asset. This distinction matters: a rising ETF does not
-receive a performance bonus unless its configured signal would also have
-earned a positive trailing return. Candidate-specific returns are rebuilt in
-the joint optimiser, so every candidate is evaluated using its own prior
-signal history without future observations.
-
-`config/portfolio_sizing_history_confidence_cash_retention.json` preserves a
-named copy of the final rule for audit. The same rule is now the default in
-`config/portfolio_sizing.json`. A full year of prior observations receives
-confidence one; shorter histories are linearly shrunk. As of 1 October this
+Alternative sizing designs were considered during development but their
+redundant executable configuration snapshots are not retained. The reproducible
+final rule is stored only in `config/portfolio_sizing.json`. A full year of
+prior observations receives confidence one; shorter histories are linearly
+shrunk. At the start of the evaluation period this
 produced strategic weights of approximately 63.6% SPY, 14.8% STI, and 16.6%
 BTC before signals were applied. It uses no return or Sharpe forecast and no
 asset-specific preference.

@@ -37,29 +37,11 @@ the same experiment only when the supplied files have these checksums:
 | Initial chronological fold search | Establish baseline momentum and mean-reversion parameters | `config/strategy_optimization.json` |
 | Short-window robustness search | Compare 30-, 60-, and 120-minute decisions over rolling 14-session windows | `config/two_week_strategy_optimization.json` |
 | Expanded STI search | Search a wider 120-minute STI lookback and z-score grid alongside the full SPY grid | `config/sti_mean_reversion_expanded_optimization.json` |
-| Confidence plus price-performance sizing | Test inverse volatility adjusted by data-history confidence and underlying-price Sharpe | `config/portfolio_sizing_performance_adjusted.json` |
-| Performance sizing with cash retention | Test the same performance adjustment without redistributing inactive allocations | `config/portfolio_sizing_performance_adjusted_cash_retention.json` |
-| Strategy-performance sizing | Replace underlying-price Sharpe with trailing after-cost strategy Sharpe | `config/portfolio_sizing_strategy_performance_cash_retention.json` |
-| History-confidence sizing | Remove return/Sharpe multipliers; use history confidence and inverse volatility, retaining inactive allocations as cash | `config/portfolio_sizing_history_confidence_cash_retention.json` |
-| Final portfolio sizing | Frozen copy of the selected history-confidence rule | `config/portfolio_sizing.json` |
+| Final portfolio sizing | History-confidence inverse volatility with inactive allocations retained as cash | `config/portfolio_sizing.json` |
 
-The corresponding experimental strategy snapshots are retained as
-`config/selected_parameters_*.json`. They are audit records, not active
-defaults. `config/selected_strategies.json` is the only active final strategy
-selection.
-
-The retained snapshot files are:
-
-- `config/selected_parameters_expanded_sti.json`
-- `config/selected_parameters_expanded_sti_performance_adjusted.json`
-- `config/selected_parameters_expanded_sti_cash_retention.json`
-- `config/selected_parameters_expanded_sti_strategy_performance.json`
-- `config/selected_parameters_expanded_sti_history_confidence.json`
-- `config/selected_parameters_pre_october_history_confidence.json`
-
-Several snapshots contain the same parameter values because the experiment
-changed sizing rather than signal generation. They remain separately named so
-the input combination used by each recorded experiment is unambiguous.
+Exploratory sizing alternatives are summarized below but their redundant
+configuration snapshots are not retained. `config/selected_strategies.json` is
+the only active final strategy selection.
 
 ## Experiment sequence for presentation
 
@@ -121,7 +103,7 @@ python run_two_week_strategy_optimization.py \
   --fx-file data/fx/fx_rates_to_usd.csv \
   --config-file config/sti_mean_reversion_expanded_optimization.json \
   --selected-strategies config/strategy_search_baseline.json \
-  --sizing-config config/portfolio_sizing_history_confidence_cash_retention.json \
+  --sizing-config config/portfolio_sizing.json \
   --cost-config config/cost_assumptions.json \
   --output-dir results/final_training_validation_selection \
   --progress-every 10
