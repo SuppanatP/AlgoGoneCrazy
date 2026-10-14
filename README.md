@@ -9,9 +9,11 @@ for:
 - `BTCUSDT` from Binance Spot
 
 It also provides separate steps that derive 30-minute OHLCV bars and apply a
-small set of conservative backfill methods. A separate strategy package now
-generates momentum and mean-reversion signals. Execution, portfolio accounting,
-experiment orchestration, PostgreSQL, and trade simulation remain later phases.
+small set of conservative backfill methods. A separate strategy package
+generates momentum and mean-reversion signals, and a historical backtesting
+entry point connects those signals to the shared trade tracker. A pre-test
+parameter-comparison workflow and a development-only parameter optimiser are
+also available. Live execution and PostgreSQL remain later phases.
 
 ## Design
 
@@ -47,6 +49,15 @@ Canonical 30m bars
       -> adjusted-close strategy features
       -> momentum or mean-reversion signal
       -> target long/cash position
+      -> delay until the next complete real bar
+      -> raw-open simulated execution
+      -> trades, equity curve, costs, and comparison metrics
+
+Development-period canonical bars
+      -> configured SPY momentum and STI mean-reversion parameter grids
+      -> chronological fold backtests with the same execution and cost model
+      -> reliability filters and robustness ranking
+      -> locally saved selected parameters
 ```
 
 Five minutes is the source resolution. It preserves enough detail to construct
@@ -80,14 +91,26 @@ src/trading_strategy/
   common.py              Shared strategy input checks and signal eligibility
   momentum.py            Long/cash EMA and trailing-return momentum rule
   mean_reversion.py      Long/cash rolling z-score mean-reversion rule
+src/strategy_optimizer/
+  search_space.py        Valid, deterministic strategy parameter grids
+  evaluation.py          Chronological fold evaluation through the backtester
+  selection.py           Reliability filters, robust scoring, and ranking
+src/strategy_backtest.py Strategy-to-backtester adapter and output writer
+src/backtest.py          Reused bar-by-bar backtest engine
+src/tracker.py           Reused cash, position, fill, trade, and cost ledger
+src/metrics.py           Reused performance and transaction-cost metrics
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
+  strategy_optimization.json Search spaces, development folds, and constraints
 test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
 run_aggregation.py       Separate 30m aggregation entry point
 run_backfill.py          Separate non-destructive backfill entry point
 run_consolidation.py     Canonical four-asset CSV entry point
 run_market_data_pipeline.py  One-command sequential workflow entry point
+run_strategy_backtest.py SPY/ES3 momentum and mean-reversion backtest entry point
+run_parameter_experiments.py Pre-test parameter comparison entry point
+run_strategy_optimizer.py Development-only strategy optimisation entry point
 ```
 
 ## Strategy modules
@@ -146,6 +169,130 @@ mean_reversion = generate_mean_reversion_signals(
 )
 ```
 
+## Strategy backtesting
+
+The strategy backtest runs SPY and ES3.SI independently so USD and SGD are not
+mixed. Indicators use `adjusted_close`; a target produced after one bar closes
+is delayed and executed at the next complete real bar's raw `open`. Positions
+are valued using raw `close`. Backfilled bars preserve indicator continuity but
+cannot trigger an execution. Any remaining position is force-closed using the
+final complete real bar's raw `close` so each run ends with realized P&L.
+
+By default, the runner executes momentum, mean reversion, and buy-and-hold for
+both instruments using `config/cost_assumptions.json`. SPY and ES3 positions are
+rounded to whole units. Slippage defaults to zero and can be supplied explicitly.
+
+```bash
+python run_strategy_backtest.py
+```
+
+Run one combination or select a historical range:
+
+```bash
+python run_strategy_backtest.py \
+  --instrument SPY \
+  --strategy momentum \
+  --start 2024-01-01 \
+  --end 2025-01-01 \
+  --slippage-bps 2
+```
+
+Use a different canonical CSV or override project commissions with a flat fee:
+
+```bash
+python run_strategy_backtest.py \
+  --input-file data/canonical/market_bars_30m.csv \
+  --flat-fee-bps 10 \
+  --output-dir results/strategy_backtests
+```
+
+The default output directory contains `summary.csv` and separate signal,
+position, fill, trade, and equity CSVs for each run. `parameters.json` records
+the parameters and execution assumptions. `summary.csv` is the first file to
+use for comparing the four strategy/instrument combinations.
+
+This is a historical simulation, not realized trading. The current raw-price
+ledger does not add separate dividend cash flows, so dividend-paying assets and
+their buy-and-hold benchmarks are compared consistently on a price-return basis.
+
+### Pre-test parameter comparison
+
+The parameter experiment uses only bars before 1 October 2026. It compares
+three momentum and three mean-reversion configurations over chronological
+development and validation periods. October and later data remain excluded for
+the official test period.
+
+```bash
+python run_parameter_experiments.py
+```
+
+The default outputs are `results/parameter_experiments/parameter_comparison.csv`
+and `experiment_manifest.json`. The manifest records the cutoff, periods, costs,
+and every parameter set so the comparison can be reproduced.
+
+### Strategy parameter optimisation
+
+The optimiser searches momentum parameters for SPY and mean-reversion
+parameters for ES3.SI. Every candidate is evaluated on chronological development
+folds using the existing next-bar execution, portfolio ledger, and project cost
+model. Validation observations never affect candidate ranking.
+
+All boundaries are UTC and use an inclusive start and exclusive end. The
+official test period starts at `2026-10-01T00:00:00Z`, so no development or
+validation run includes an October 2026 observation.
+
+| Instrument | Development folds used for selection | Separate validation period |
+|---|---|---|
+| SPY | 18 Sep 2023–1 Apr 2024; 1 Apr–1 Oct 2024; 1 Oct 2024–1 Apr 2025; 1 Apr–1 Oct 2025 | 1 Oct 2025–1 Oct 2026 |
+| ES3.SI | 21 Jul–4 Aug 2026; 4–18 Aug 2026; 18 Aug–1 Sep 2026 | 1 Sep–1 Oct 2026 |
+
+The search is a deliberately small discrete grid rather than a continuous or
+every-integer search. Values represent materially different horizons while
+keeping the results understandable and limiting overfitting.
+
+| Strategy | Values searched | Valid candidates |
+|---|---|---:|
+| SPY momentum | Fast EMA: 8, 13, 26 bars; slow EMA: 26, 52, 104 bars; return lookback: 13, 26, 52 bars; entry return: 0%, 0.25%, 0.50%; exit return: -0.25%, 0% | 144 |
+| ES3.SI mean reversion | Rolling window: 20, 26, 52 bars; entry z-score: -1.25, -1.50, -2.00; exit z-score: -0.25, 0; maximum holding period: 26, 52, 104 bars | 54 |
+
+This produces 738 fold backtests: `144 x 4` for SPY and `54 x 3` for ES3.SI.
+On the current project machine, the complete development search took about two
+minutes. Allow roughly two to five minutes depending on the computer and other
+workload. `--validate-selected` repeats the development search before adding the
+two validation runs, so it takes approximately the same amount of time.
+
+Run the full development search:
+
+```bash
+python run_strategy_optimizer.py
+```
+
+Run a small connection and workflow check without completing the full grid:
+
+```bash
+python run_strategy_optimizer.py --max-candidates 2
+```
+
+After the development search has selected candidates, validation can be run
+explicitly. It is reported separately and is not fed back into the ranking:
+
+```bash
+python run_strategy_optimizer.py --validate-selected
+```
+
+Generated files are written beneath `results/strategy_optimizer/` and are
+ignored by Git:
+
+- `fold_results.csv`: one row per candidate and development fold
+- `candidate_ranking.csv`: reliability checks, aggregate metrics, and ranking
+- `selected_parameters.json`: the development-only winners
+- `validation_summary.csv`: optional untouched validation results
+- `optimization_manifest.json`: data, configuration, costs, and run settings
+
+If the group approves the winners, copy only the frozen parameter values into a
+tracked strategy configuration. Do not commit generated optimisation outputs or
+use official test-period observations to revise the parameters.
+
 ## Setup
 
 From the repository root:
@@ -196,6 +343,9 @@ python run_aggregation.py --help
 python run_backfill.py --help
 python run_consolidation.py --help
 python run_market_data_pipeline.py --help
+python run_strategy_backtest.py --help
+python run_parameter_experiments.py --help
+python run_strategy_optimizer.py --help
 ```
 
 ### Ingestion options
