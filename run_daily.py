@@ -12,6 +12,8 @@ Usage:
   python run_daily.py                              # yesterday (UTC)
   python run_daily.py --date 2026-09-24
   python run_daily.py --start 2026-03-22 --end 2026-09-01   # replay a whole period
+  python run_daily.py --reset --start 2026-10-05   # start trading on Oct 5, run to the latest
+                                                   # data (history before it only warms up)
   python run_daily.py --reset --start ...          # delete records and start fresh
 """
 from __future__ import annotations
@@ -25,15 +27,16 @@ import pandas as pd
 
 import config
 from src.backtest import execute_bar
-from src.data_source import fetch_bars
+from src.data_source import fetch_bars, history_problem
 from src.features import build_features
 from src.records import append_csv, load_state, save_state
-from src.strategy import RegimeStrategy
+from src.strategy import VOTING_INDICATORS, RegimeStrategy, VotingStrategy
 from src.tracker import CostModel, Portfolio
 
-STRATEGY_KEYS = ("vol_high", "vol_low", "mom_rsi", "mr_rsi", "mr_bb", "horizon", "allow_short")
+STRATEGIES = {"regime": RegimeStrategy, "voting": VotingStrategy}
 # technical indicators (from build_features, data through t-1) passed to the strategy each bar
-INDICATOR_COLS = ("rsi_14", "close_over_sma_20", "close_over_sma_50", "bb_pctb_20", "bb_width_20")
+INDICATOR_COLS = tuple(dict.fromkeys(("rsi_14", "close_over_sma_20", "close_over_sma_50",
+                                      "bb_pctb_20", "bb_width_20") + VOTING_INDICATORS))
 
 
 def cost_model_from(cfg) -> CostModel:
@@ -41,10 +44,35 @@ def cost_model_from(cfg) -> CostModel:
                      dict(getattr(cfg, "COST_OVERRIDES", {})))
 
 
+def strategy_class(cfg):
+    name = getattr(cfg, "STRATEGY", "regime")
+    if name not in STRATEGIES:
+        raise ValueError(f"STRATEGY must be one of {sorted(STRATEGIES)}, got {name!r}")
+    return STRATEGIES[name]
+
+
 def strategy_params(cfg, asset: str) -> dict:
-    defaults = {"vol_high": cfg.VOL_HIGH, "vol_low": cfg.VOL_LOW, "mom_rsi": cfg.MOM_RSI,
-                "mr_rsi": cfg.MR_RSI, "mr_bb": cfg.MR_BB,
-                "horizon": cfg.HORIZON, "allow_short": cfg.ALLOW_SHORT}
+    defaults = {"use_vol_model": getattr(cfg, "USE_VOL_MODEL", True),
+                "vol_high": cfg.VOL_HIGH, "horizon": cfg.HORIZON, "allow_short": cfg.ALLOW_SHORT,
+                "exit_on_opposite": getattr(cfg, "EXIT_ON_OPPOSITE", True),
+                "stop_loss_atr": getattr(cfg, "STOP_LOSS_ATR", 0.0),
+                "take_profit_atr": getattr(cfg, "TAKE_PROFIT_ATR", 0.0),
+                "partial_tp_atr": getattr(cfg, "PARTIAL_TP_ATR", 0.0),
+                "partial_sl_atr": getattr(cfg, "PARTIAL_SL_ATR", 0.0),
+                "partial_fraction": getattr(cfg, "PARTIAL_FRACTION", 0.5),
+                "daily_fallback": getattr(cfg, "DAILY_FALLBACK", False),
+                "fallback_hour": getattr(cfg, "FALLBACK_HOUR", 20),
+                "fallback_size": getattr(cfg, "FALLBACK_SIZE", 0.1),
+                "fallback_horizon": getattr(cfg, "FALLBACK_HORIZON", 12)}
+    if strategy_class(cfg) is VotingStrategy:
+        defaults |= {"weights": dict(cfg.RULE_WEIGHTS), "min_score": cfg.MIN_SCORE,
+                     "partial_min_score": getattr(cfg, "PARTIAL_MIN_SCORE", 0.0),
+                     "partial_vol_high": getattr(cfg, "PARTIAL_VOL_HIGH", None),
+                     "partial_entry_size": getattr(cfg, "PARTIAL_ENTRY_SIZE", 0.5),
+                     "params": dict(getattr(cfg, "RULE_PARAMS", {}))}
+    else:
+        defaults |= {"vol_low": cfg.VOL_LOW, "mom_rsi": cfg.MOM_RSI,
+                     "mr_rsi": cfg.MR_RSI, "mr_bb": cfg.MR_BB}
     return {k: cfg.ASSETS[asset].get(k, v) for k, v in defaults.items()}
 
 
@@ -54,19 +82,20 @@ class DailyRunner:
         self.assets = list(cfg.ASSETS)
         self.weights = {a: cfg.ASSETS[a]["weight"] for a in self.assets}
 
-        # self.models = {}
-        # for a in self.assets:
-        #     up = lgb.Booster(model_file=str(cfg.ASSETS[a]["model_up"]))
-        #     down = lgb.Booster(model_file=str(cfg.ASSETS[a]["model_down"]))
-        #     if up.feature_name() != down.feature_name():
-        #         raise ValueError(f"{a}: up and down models use different feature columns")
-        #     self.models[a] = (up, down)
+        self.models = {}
+        for a in self.assets:
+            up = lgb.Booster(model_file=str(cfg.ASSETS[a]["model_up"]))
+            down = lgb.Booster(model_file=str(cfg.ASSETS[a]["model_down"]))
+            if up.feature_name() != down.feature_name():
+                raise ValueError(f"{a}: up and down models use different feature columns")
+            self.models[a] = (up, down)
 
         costs = cost_model_from(cfg)
+        Strategy = strategy_class(cfg)
         state = load_state(cfg.RECORDS_DIR)
         if state is None:
             self.pf = Portfolio(cfg.INITIAL_CASH, cost_model=costs)
-            self.strategies = {a: RegimeStrategy(**strategy_params(cfg, a)) for a in self.assets}
+            self.strategies = {a: Strategy(**strategy_params(cfg, a)) for a in self.assets}
             self.prev_targets = {a: 0.0 for a in self.assets}
             self.last_bar_time = {a: None for a in self.assets}
         else:
@@ -80,11 +109,11 @@ class DailyRunner:
             for a in self.assets:
                 saved = state["strategies"][a]
                 params = strategy_params(cfg, a)
-                changed = [k for k in STRATEGY_KEYS if saved.get(k) != params[k]]
+                changed = [k for k in params if saved.get(k) != params[k]]
                 if changed:
                     print(f"  warning: {a} strategy settings changed since last run: {changed}")
-                self.strategies[a] = RegimeStrategy(**params, position=saved["position"],
-                                                  bars_left=saved["bars_left"])
+                self.strategies[a] = Strategy(**params, **{k: saved[k] for k in Strategy.STATE
+                                                           if k in saved})
                 self.prev_targets[a] = float(state["prev_targets"][a])
                 t = state["last_bar_time"][a]
                 self.last_bar_time[a] = pd.Timestamp(t) if t else None
@@ -104,27 +133,18 @@ class DailyRunner:
         return hist, today
 
     def _predict(self, asset, hist, bars_today):
-        # up, down = self.models[asset]
-        # cols = up.feature_name()
-        # feats = build_features(hist[asset], asset, hist)
-        # missing = [c for c in cols if c not in feats.columns]
-        # if missing:
-        #     raise KeyError(f"{asset}: build_features() does not produce model columns {missing}")
-        # X = feats.loc[bars_today.index, cols]
-        # nan_rows = int(X.isna().any(axis=1).sum())
-        # if nan_rows:
-        #     print(f"  warning: {asset}: {nan_rows} bars with NaN features (increase LOOKBACK_DAYS?)")
-        # return (pd.Series(up.predict(X), index=X.index),
-        #         pd.Series(down.predict(X), index=X.index))
+        up, down = self.models[asset]
+        cols = up.feature_name()
         feats = build_features(hist[asset], asset, hist)
-        cols = feats.columns
+        missing = [c for c in cols if c not in feats.columns]
+        if missing:
+            raise KeyError(f"{asset}: build_features() does not produce model columns {missing}")
         X = feats.loc[bars_today.index, cols]
         nan_rows = int(X.isna().any(axis=1).sum())
         if nan_rows:
             print(f"  warning: {asset}: {nan_rows} bars with NaN features (increase LOOKBACK_DAYS?)")
-        # print(feats)
-        return (pd.Series(np.random.rand(len(bars_today)), index=bars_today.index),
-                pd.Series(np.random.rand(len(bars_today)), index=bars_today.index),
+        return (pd.Series(up.predict(X), index=X.index),
+                pd.Series(down.predict(X), index=X.index),
                 feats.loc[bars_today.index, list(INDICATOR_COLS)])
 
     def run_day(self, day) -> int:
@@ -142,6 +162,11 @@ class DailyRunner:
             return 0
         for a in active:
             self._check_gap(a, today[a].index[0])
+            problem = history_problem(hist[a], today[a].index[0], cfg.WARMUP_DAYS, cfg.BAR_FREQ)
+            if problem:
+                raise SystemExit(f"{a}: not enough history to trade from {today[a].index[0]} "
+                                 f"(need {cfg.WARMUP_DAYS} days without gaps): {problem}. "
+                                 f"Add the missing bars to the CSVs in config.ASSETS first.")
 
         timeline = today[active[0]].index
         for a in active[1:]:
@@ -155,15 +180,16 @@ class DailyRunner:
         n_fills, n_trades, n_eq = len(self.pf._fills), len(self.pf._trades), len(self.pf._equity)
         decisions = []
         for ts in timeline:
-            targets, opens, closes, signals = {}, {}, {}, {}
+            targets, opens, closes, signals, votes = {}, {}, {}, {}, {}
             for a in active:
                 row = data[a].loc[ts]
                 if np.isnan(row["open"]):
                     continue                      # no bar for this asset at ts
                 indicators = {k: float(row[k]) for k in INDICATOR_COLS}
-                signals[a], targets[a] = self.strategies[a].step(float(row["p_up"]),
-                                                                 float(row["p_down"]),
-                                                                 indicators)
+                st, p_up, p_down = self.strategies[a], float(row["p_up"]), float(row["p_down"])
+                if isinstance(st, VotingStrategy):        # log each rule's vote
+                    votes[a] = {f"vote_{r}": v for r, v in st.votes(p_up, p_down, indicators).items()}
+                signals[a], targets[a] = st.step(p_up, p_down, indicators, float(row["open"]), ts)
                 opens[a], closes[a] = float(row["open"]), float(row["close"])
             before = {a: self.pf.position(a) for a in targets}
             fills = execute_bar(self.pf, ts, targets, self.prev_targets, opens, closes,
@@ -179,7 +205,7 @@ class DailyRunner:
                                   "close": closes[a], "p_up": data[a].at[ts, "p_up"],
                                   "p_down": data[a].at[ts, "p_down"],
                                   **{k: data[a].at[ts, k] for k in INDICATOR_COLS},
-                                  "signal": signals[a],
+                                  **votes.get(a, {}), "signal": signals[a],
                                   "target": targets[a], "action": action,
                                   "position_qty": after, "transaction_cost": cost.get(a, 0.0),
                                   "portfolio_equity": equity})
@@ -220,12 +246,22 @@ class DailyRunner:
         })
 
 
+def last_data_day(cfg) -> str:
+    """Last UTC day with bars for any asset."""
+    far = pd.Timestamp("2100-01-01", tz="UTC")
+    last = max(fetch_bars(pd.Timestamp("1970-01-01", tz="UTC"), far, s["csv"], cfg.TIME_COL,
+                          s.get("symbol"), getattr(cfg, "SYMBOL_COL", "symbol")).index.max()
+               for s in cfg.ASSETS.values())
+    return str(last.date())
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--date", help="single day, YYYY-MM-DD (UTC)")
-    ap.add_argument("--start", help="first day of a range, YYYY-MM-DD")
-    ap.add_argument("--end", help="last day of a range (inclusive), YYYY-MM-DD")
+    ap.add_argument("--start", help="first trading day, YYYY-MM-DD; history before it is "
+                                    "only used to warm up the features")
+    ap.add_argument("--end", help="last day (inclusive), YYYY-MM-DD; default: last day with data")
     ap.add_argument("--reset", action="store_true", help="delete existing records first")
     args = ap.parse_args(argv)
 
@@ -234,7 +270,10 @@ def main(argv=None):
         print(f"deleted {config.RECORDS_DIR}")
 
     if args.start:
-        days = pd.date_range(args.start, args.end or args.start, freq="D")
+        end = args.end or last_data_day(config)
+        days = pd.date_range(args.start, end, freq="D")
+        print(f"trading {days[0].date()} -> {days[-1].date()}" if len(days) else
+              f"no data on or after {args.start}")
     elif args.date:
         days = [pd.Timestamp(args.date)]
     else:

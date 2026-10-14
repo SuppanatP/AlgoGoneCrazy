@@ -149,6 +149,7 @@ def build_features(bars: pd.DataFrame, asset: str | None = None,
     up_bar = (c > o).astype(float)
     for w in [10, 20, 50]:
         feat[f"uprate_{w}"] = up_bar.rolling(w).mean()
+        feat[f"winrate_{w}"] = feat[f"uprate_{w}"]   # old name used by the saved models
 
     # --- cyclical time encodings ---
     hour = bars.index.hour + bars.index.minute / 60
@@ -158,5 +159,4 @@ def build_features(bars: pd.DataFrame, asset: str | None = None,
     feat["dow_sin"] = np.sin(2 * np.pi * dow / 7)
     feat["dow_cos"] = np.cos(2 * np.pi * dow / 7)
 
-    print("num features:", feat.shape[1])
     return feat.shift(1)  # leakage guard: row t sees nothing from bar t onwards
