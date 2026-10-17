@@ -1,10 +1,12 @@
 # FE5209 Group Project - Market Data Pipeline
 
+The tracked experiment history, retained configurations, final SPY/STI
+selection, and final-period data policy are summarized in `EXPERIMENTS.md`.
+
 This first project phase extracts and cleans completed five-minute source bars
 for:
 
 - `SPY` from Alpaca Market Data
-- `TLT` from Alpaca Market Data
 - `SG.ES3` from Moomoo OpenAPI when entitled, or recent `ES3.SI` from Yahoo
 - `BTCUSDT` from Binance Spot
 
@@ -12,8 +14,10 @@ It also provides separate steps that derive 30-minute OHLCV bars and apply a
 small set of conservative backfill methods. A separate strategy package
 generates momentum and mean-reversion signals, and a historical backtesting
 entry point connects those signals to the shared trade tracker. A pre-test
-parameter-comparison workflow and a development-only parameter optimiser are
-also available. Live execution and PostgreSQL remain later phases.
+parameter-comparison workflow and a training-only parameter optimiser are
+also available. A strategy-agnostic sizing layer can produce capped
+inverse-volatility or equal-weight risk budgets before signals are applied.
+Live execution and PostgreSQL remain later phases.
 
 ## Design
 
@@ -58,6 +62,19 @@ Development-period canonical bars
       -> chronological fold backtests with the same execution and cost model
       -> reliability filters and robustness ranking
       -> locally saved selected parameters
+
+Canonical adjusted closes
+      -> one daily close per local market session
+      -> trailing annualized volatility known before each rebalance date
+      -> inverse volatility multiplied by available-history confidence
+      -> allocate a 95% strategic budget subject to one common 75% cap
+      -> retain every inactive signal's allocation as cash
+
+Selected SPY/STI strategies + external BTC signal interface
+      -> delay decisions to each asset's next eligible raw open
+      -> apply weekly risk budgets and point-in-time USD conversion
+      -> execute through one USD cash and position ledger
+      -> decisions, fills, trades, equity, costs, and per-asset P&L
 ```
 
 Five minutes is the source resolution. It preserves enough detail to construct
@@ -74,7 +91,7 @@ match exactly or ingestion stops instead of silently mixing observations.
 ```text
 src/market_data/
   config.py              Instrument metadata and ingestion settings
-  extractors/alpaca.py   SPY/TLT raw/adjusted REST extraction and pagination
+  extractors/alpaca.py   Alpaca raw/adjusted REST extraction and pagination
   extractors/moomoo.py   SG.ES3 OpenD extraction and pagination
   extractors/binance.py  BTCUSDT extraction and pagination
   extractors/yahoo.py    Selectable Yahoo fallback extraction
@@ -95,13 +112,24 @@ src/strategy_optimizer/
   search_space.py        Valid, deterministic strategy parameter grids
   evaluation.py          Chronological fold evaluation through the backtester
   selection.py           Reliability filters, robust scoring, and ranking
+  two_week.py            Cost-aware two-week screening and joint diagnostics
+src/portfolio_sizing/
+  inverse_volatility.py  Daily volatility, equal/inverse-vol capped schedules
+  fx.py                  Point-in-time conversion into the USD portfolio base
+  fred_csv.py            Downloaded FRED SGD/USD CSV standardization
+  targets.py             Signal gating and base-currency target quantities
+src/portfolio_simulation.py Shared signals, USD execution, and portfolio replay
 src/strategy_backtest.py Strategy-to-backtester adapter and output writer
 src/backtest.py          Reused bar-by-bar backtest engine
 src/tracker.py           Reused cash, position, fill, trade, and cost ledger
 src/metrics.py           Reused performance and transaction-cost metrics
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
-  strategy_optimization.json Search spaces, development folds, and constraints
+  october_live_data_pipeline.json  Live extraction plus history/live consolidation
+  strategy_optimization.json Search spaces, training folds, and constraints
+  two_week_strategy_optimization.json Short-horizon frequencies and compact grids
+  portfolio_sizing.json      Frozen history-confidence sizing and quantity steps
+  selected_strategies.json   Frozen SPY/STI rules and external BTC interface
 test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
 run_aggregation.py       Separate 30m aggregation entry point
@@ -111,6 +139,10 @@ run_market_data_pipeline.py  One-command sequential workflow entry point
 run_strategy_backtest.py SPY/ES3 momentum and mean-reversion backtest entry point
 run_parameter_experiments.py Pre-test parameter comparison entry point
 run_strategy_optimizer.py Development-only strategy optimisation entry point
+run_two_week_strategy_optimization.py Two-week SPY/STI review entry point
+run_fx_ingestion.py       Downloaded FRED SGD/USD standardization entry point
+run_portfolio_weights.py  Rolling inverse-volatility/equal-weight entry point
+run_portfolio_simulation.py Shared-USD portfolio replay entry point
 ```
 
 ## Strategy modules
@@ -219,7 +251,7 @@ their buy-and-hold benchmarks are compared consistently on a price-return basis.
 
 The parameter experiment uses only bars before 1 October 2026. It compares
 three momentum and three mean-reversion configurations over chronological
-development and validation periods. October and later data remain excluded for
+training and validation periods. October and later data remain excluded for
 the official test period.
 
 ```bash
@@ -233,18 +265,20 @@ and every parameter set so the comparison can be reproduced.
 ### Strategy parameter optimisation
 
 The optimiser searches momentum parameters for SPY and mean-reversion
-parameters for ES3.SI. Every candidate is evaluated on chronological development
+parameters for ES3.SI. Every candidate is evaluated on chronological training
 folds using the existing next-bar execution, portfolio ledger, and project cost
-model. Validation observations never affect candidate ranking.
+model. Validation observations never affect candidate ranking. BTC strategy
+development is outside this optimiser and connects through the external signal
+interface described below.
 
 All boundaries are UTC and use an inclusive start and exclusive end. The
-official test period starts at `2026-10-01T00:00:00Z`, so no development or
+official test period starts at `2026-10-01T00:00:00Z`, so no training or
 validation run includes an October 2026 observation.
 
-| Instrument | Development folds used for selection | Separate validation period |
+| Instrument | Training folds used for selection | Separate validation period |
 |---|---|---|
 | SPY | 18 Sep 2023–1 Apr 2024; 1 Apr–1 Oct 2024; 1 Oct 2024–1 Apr 2025; 1 Apr–1 Oct 2025 | 1 Oct 2025–1 Oct 2026 |
-| ES3.SI | 21 Jul–4 Aug 2026; 4–18 Aug 2026; 18 Aug–1 Sep 2026 | 1 Sep–1 Oct 2026 |
+| ES3.SI | 6–21 Jul 2026; 21 Jul–4 Aug 2026; 4–18 Aug 2026; 18 Aug–1 Sep 2026 | 1 Sep–1 Oct 2026 |
 
 The search is a deliberately small discrete grid rather than a continuous or
 every-integer search. Values represent materially different horizons while
@@ -255,13 +289,13 @@ keeping the results understandable and limiting overfitting.
 | SPY momentum | Fast EMA: 8, 13, 26 bars; slow EMA: 26, 52, 104 bars; return lookback: 13, 26, 52 bars; entry return: 0%, 0.25%, 0.50%; exit return: -0.25%, 0% | 144 |
 | ES3.SI mean reversion | Rolling window: 20, 26, 52 bars; entry z-score: -1.25, -1.50, -2.00; exit z-score: -0.25, 0; maximum holding period: 26, 52, 104 bars | 54 |
 
-This produces 738 fold backtests: `144 x 4` for SPY and `54 x 3` for ES3.SI.
-On the current project machine, the complete development search took about two
+This produces 792 fold backtests: `144 x 4` for SPY and `54 x 4` for ES3.SI.
+On the current project machine, the complete training search took about two
 minutes. Allow roughly two to five minutes depending on the computer and other
-workload. `--validate-selected` repeats the development search before adding the
+workload. `--validate-selected` repeats the training search before adding the
 two validation runs, so it takes approximately the same amount of time.
 
-Run the full development search:
+Run the full training search:
 
 ```bash
 python run_strategy_optimizer.py
@@ -273,7 +307,7 @@ Run a small connection and workflow check without completing the full grid:
 python run_strategy_optimizer.py --max-candidates 2
 ```
 
-After the development search has selected candidates, validation can be run
+After the training search has selected candidates, validation can be run
 explicitly. It is reported separately and is not fed back into the ranking:
 
 ```bash
@@ -283,15 +317,325 @@ python run_strategy_optimizer.py --validate-selected
 Generated files are written beneath `results/strategy_optimizer/` and are
 ignored by Git:
 
-- `fold_results.csv`: one row per candidate and development fold
+- `fold_results.csv`: one row per candidate and training fold
 - `candidate_ranking.csv`: reliability checks, aggregate metrics, and ranking
-- `selected_parameters.json`: the development-only winners
+- `selected_parameters.json`: the training-only winners
 - `validation_summary.csv`: optional untouched validation results
 - `optimization_manifest.json`: data, configuration, costs, and run settings
 
 If the group approves the winners, copy only the frozen parameter values into a
 tracked strategy configuration. Do not commit generated optimisation outputs or
 use official test-period observations to revise the parameters.
+
+### Two-week strategy review
+
+The short-horizon workflow complements the original fold optimiser. It compares
+30-, 60-, and 120-minute decision frequencies while continuing to execute at
+the next underlying 30-minute raw open. Lookbacks are expressed as trading-day
+horizons and converted to the appropriate number of decision bars, so changing
+frequency does not silently change the intended economic horizon.
+
+Every per-asset screen uses the final USD mechanics: adjusted closes for
+signals, raw prices for execution and valuation, historical SGD/USD rates,
+whole shares, the common concentration cap, and broker commissions. FX transaction
+fees are outside the project scope; exchange rates are still required for USD
+conversion and reporting. The inexpensive first pass runs every candidate once
+and derives rolling 14-session diagnostics stepped every five sessions. This
+matches the roughly 14 equity sessions in the 1-20 October live period. The
+windows overlap and are therefore robustness checks rather than independent
+statistical observations. Only the shortlist is then rerun with cash and
+positions independently reset for every 14-session window.
+
+The final diagnostic combines shortlisted SPY and STI candidates in the actual
+shared USD portfolio under both weekly capped inverse-volatility and capped
+equal weighting. A separate rolling comparison holds the top strategy pair
+fixed, so differences are caused by sizing rather than different signals. BTC
+has a zero signal while its external signal file is unavailable. Because STI
+history begins in July and sizing requires 40 daily returns, only the available
+full pre-October windows are included and the output records the actual count.
+The latest 20-calendar-day
+pre-October period, 11-30 September 2026, is labelled as a known diagnostic
+because earlier September results have already influenced the redesign; it is
+not described as untouched validation. No October 2026 data is used, and the
+command never overwrites `config/selected_strategies.json`.
+
+Run the full compact search and diagnostic:
+
+```bash
+python run_two_week_strategy_optimization.py
+```
+
+Run only a limited workflow check, or omit both joint sizing comparisons:
+
+```bash
+python run_two_week_strategy_optimization.py --max-candidates 2
+python run_two_week_strategy_optimization.py --skip-joint-diagnostic
+```
+
+Run the expanded pre-October SPY/STI search without changing the original
+optimisation outputs or the frozen selected strategy:
+
+```bash
+python run_two_week_strategy_optimization.py \
+  --config-file config/sti_mean_reversion_expanded_optimization.json \
+  --output-dir results/sti_mean_reversion_expanded_optimization \
+  --progress-every 10
+```
+
+This run screens the full SPY momentum grid and the expanded 120-minute STI
+mean-reversion grid on their configured training windows. It does not reject a
+candidate merely because some historical 14-session windows contain no order;
+trade-window coverage remains visible as a diagnostic. Shortlisted SPY/STI
+pairs are then compared jointly on the September pre-October validation period.
+The run never reads October observations and never updates a selected-strategy
+configuration automatically.
+
+The simpler history-confidence experiment deliberately removes every return or
+Sharpe multiplier. It uses only inverse volatility and the amount of history
+available before each rebalance:
+
+```text
+allocation score = min(1, prior daily observations / 252) / volatility
+```
+
+It also keeps inactive allocations as cash and locks each position's quantity
+from entry until the strategy exits. Weekly weight changes therefore affect the
+next entry but do not generate resizing orders for an already-open position.
+Run the no-trade-filter training and validation experiment with:
+
+```bash
+python run_two_week_strategy_optimization.py \
+  --input-file data/canonical/market_bars_30m_training_validation.csv \
+  --config-file config/sti_mean_reversion_expanded_optimization.json \
+  --selected-strategies config/strategy_search_baseline.json \
+  --sizing-config config/portfolio_sizing.json \
+  --output-dir results/pre_october_joint_history_confidence_optimization \
+  --progress-every 10
+```
+
+The highest after-cost joint validation result selects SPY momentum candidate
+`0041` and expanded STI mean-reversion candidate `0052`. The reviewed and
+frozen selection is stored in `config/selected_strategies.json`. The baseline
+file is intentionally separate, so the selected pair is not supplied as an
+input to its own search. The final evaluation-period simulation is reported
+separately after that period is complete.
+
+The ignored directory `results/two_week_strategy_optimization/` contains:
+
+- `candidate_screening.csv`: full-period and inexpensive two-week candidate metrics
+- `two_week_continuous_windows.csv`: first-pass rolling 14-session diagnostics
+- `two_week_independent_windows.csv`: exact reset-window results for the shortlist
+- `shortlisted_candidate_review.csv`: shortlist comparison used for discussion
+- `sizing_method_comparison_windows.csv`: same top strategy pair under both sizing methods in rolling pre-October windows
+- `sizing_method_comparison_summary.csv`: concise inverse-volatility versus equal-weight comparison
+- `joint_diagnostic_summary.csv`: known September shared-portfolio comparison
+- `optimization_manifest.json`: data, periods, costs, sizing, and grid snapshot
+
+The sizing comparison ranks methods for review but does not change the default
+automatically. The final default in `config/portfolio_sizing.json` is
+history-confidence inverse volatility with inactive allocations held as cash.
+
+There is no minimum trade-window eligibility condition. Completed candidates
+are ranked by median after-cost return, profitable-window rate,
+worst-window return, and finally cost rate. Trade frequency is reported but is
+not a ranking variable. This remains a shortlist aid rather than an automatic
+strategy-selection rule.
+
+### Portfolio sizing
+
+Portfolio sizing is separate from signal generation. Momentum, mean reversion,
+or another teammate's strategy supplies a standardized target signal: `1` for
+long and `0` for cash. The final sizing score is each asset's inverse
+volatility multiplied by `min(1, prior daily observations / 252)`. These scores
+share a 95% strategic budget subject to one common 75% maximum. If an asset's
+signal is inactive, its strategic allocation remains cash rather than being
+transferred to another asset. The configured 5% is therefore only the minimum
+cash reserve when every strategy is active; actual cash can be higher.
+
+The tracked defaults use 60 daily return observations, permit a minimum of 40
+while STI history remains short, rebalance weekly, reserve at least 5% cash,
+apply a 5% annualized volatility floor, and apply the same 75% maximum to SPY,
+ES3.SI, and BTCUSDT. Existing position quantities are not resized merely
+because a weekly target weight changes; a new weight is applied on the next
+strategy entry. TLT is not part of the current portfolio. Every weight uses
+adjusted closing prices strictly before its rebalance date, so current or
+future prices cannot leak into the sizing decision.
+
+Alternative sizing designs were considered during development but their
+redundant executable configuration snapshots are not retained. The reproducible
+final rule is stored only in `config/portfolio_sizing.json`. A full year of
+prior observations receives confidence one; shorter histories are linearly
+shrunk. At the start of the evaluation period this
+produced strategic weights of approximately 63.6% SPY, 14.8% STI, and 16.6%
+BTC before signals were applied. It uses no return or Sharpe forecast and no
+asset-specific preference.
+
+The portfolio simulation starts with USD 500,000 in cash and no positions.
+There are no later external deposits or withdrawals. Sale proceeds, dividends,
+and other investment cash flows would remain inside the portfolio rather than
+being treated as capital injections. The current source snapshot does not yet
+contain separate dividend cash flows.
+
+Download the maximum-history CSV for official FRED series `DEXSIUS` from
+`https://fred.stlouisfed.org/series/DEXSIUS` and save the unmodified file at:
+
+```text
+data/fx/raw/DEXSIUS.csv
+```
+
+Standardize the downloaded snapshot:
+
+```bash
+python run_fx_ingestion.py
+```
+
+No FRED account or API key is used by the code. The standardizer reads the
+downloaded `observation_date,DEXSIUS` file, discards FRED's missing-value rows,
+and stores `1 / DEXSIUS` as USD per SGD. The configured one-day availability
+lag prevents a same-day Federal Reserve fixing from being treated as known
+earlier that day. Re-running the command deterministically replaces the
+standardized output from the downloaded snapshot. Optional `--start` and
+`--end` arguments apply inclusive-start/exclusive-end filtering.
+
+The downloaded CSV, standardized FX CSV, and FX summary JSON are data
+artifacts beneath `data/`; they are ignored by Git and must not be committed.
+
+Build weights for the three configured assets:
+
+```bash
+python run_portfolio_weights.py \
+  --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+Build the equal-weight schedule instead of the configured inverse-volatility
+default:
+
+```bash
+python run_portfolio_weights.py \
+  --sizing-method capped_equal_weight \
+  --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+Build a three-asset diagnostic schedule from the backtest snapshot:
+
+```bash
+python run_portfolio_weights.py \
+  --input-file data/canonical/market_bars_30m_training_validation.csv \
+  --instrument SPY ES3.SI BTCUSDT \
+  --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+After refreshing the canonical file through 30 September 2026, build the
+initial official-period weights using information available before 1 October:
+
+```bash
+python run_portfolio_weights.py \
+  --start 2026-10-01 \
+  --end 2026-10-02 \
+  --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+Generated `portfolio_weights.csv`, `volatility_diagnostics.csv`,
+`currency_conversion.csv`, and `portfolio_sizing_manifest.json` files are written beneath
+`results/portfolio_sizing/` and ignored by Git.
+
+USD is the portfolio base and final reporting currency. USD assets use a rate of
+1, USDT is treated as USD at a fixed 1:1 rate for this project, and SGD assets
+must use timestamped SGD-to-USD rates. Prices are converted before volatility
+and weights are calculated, so the risk calculation and eventual portfolio
+totals use one currency. Raw market prices retain their native `quote_currency`;
+the sizing command verifies that metadata against its configuration. The
+conversion audit records both `quote_currency` and `base_currency`.
+
+The FX file is long format. `rate_to_base` means USD per one unit of the quote
+currency; for example, `0.78` means SGD 1 = USD 0.78:
+
+```csv
+rate_time_utc,quote_currency,base_currency,rate_to_base,source,source_series,source_observation_date,is_forward_filled
+2026-09-30T00:00:00Z,SGD,USD,0.78,fred_download,DEXSIUS,2026-09-29,false
+2026-10-01T00:00:00Z,SGD,USD,0.779,fred_download,DEXSIUS,2026-09-30,false
+```
+
+The converter uses the latest rate available on or before each price date and
+never fills backwards from a future rate. An FX file is not needed when every
+selected asset is USD or USDT, for example `--instrument SPY BTCUSDT`.
+Historical FX coverage is required when STI is selected; it should cover the
+volatility lookback as well as the reporting period.
+
+The reusable `target_quantities` function requires base-currency prices,
+preventing accidental addition of USD, SGD, and USDT notionals. The portfolio
+simulation uses the same sizing assumptions when it converts strategy targets
+into actual quantities in one USD ledger.
+
+The currently selected SPY and ES3.SI parameters are stored in
+`config/selected_strategies.json`; the optimiser never changes that file
+automatically. BTCUSDT is configured as an external signal source.
+
+| Asset | Signal method | Decision interval | Frozen selection |
+|---|---|---:|---|
+| SPY | Momentum | 120 minutes | `spy_usd__momentum_0041` |
+| ES3.SI | Mean reversion | 120 minutes | `sti_es3_sgd__mean_reversion_0052` |
+| BTCUSDT | Teammate external signal | 30 minutes | Awaiting signal CSV |
+
+BTC's CSV must contain `bar_open_time_utc` and `target_position`, where the
+target is `1` for long or `0` for cash and is decided after that 30-minute bar
+closes. Timestamps must match canonical BTC 30-minute bar opens. Sparse changes
+are allowed and are carried forward until the next supplied decision. The
+simulator delays each decision to the next eligible BTC bar open. SPY and STI
+retain their latest 120-minute decisions between their own decision times, so
+all three assets can share one portfolio despite their mixed frequencies.
+
+Run the September portfolio evaluation while the BTC signal file is unavailable:
+
+```bash
+python run_portfolio_simulation.py \
+  --start 2026-09-01 \
+  --end 2026-10-01 \
+  --allow-missing-external
+```
+
+In that temporary mode BTC receives no orders and its strategic allocation
+remains cash. SPY and STI keep their own history-confidence weights rather than
+absorbing BTC's allocation. For the complete run, save the teammate's signal file at
+`data/signals/btc_signals.csv` and omit `--allow-missing-external`; a missing BTC
+file then stops the run. The simulator uses one USD 500,000 ledger, historical
+SGD/USD rates, USDT/USD at 1:1, whole units for SPY/ES3.SI, fractional BTC,
+configured broker commissions, no separate FX transaction fee, and the next
+eligible raw open. It refreshes risk weights weekly, keeps inactive allocations
+as cash, and does not resize an existing position solely for a weight update.
+
+Use equal weighting for a direct portfolio replay comparison:
+
+```bash
+python run_portfolio_simulation.py \
+  --start 2026-09-01 \
+  --end 2026-10-01 \
+  --allow-missing-external \
+  --sizing-method capped_equal_weight \
+  --output-dir results/portfolio_simulation_equal_weight
+```
+
+Equal weighting is retained as a benchmark; history-confidence inverse
+volatility with cash retention is the configured final method. Once the BTC
+signal file and market data through 20 October are available, refresh the live
+pipeline and run the frozen official-period simulation once:
+
+```bash
+python run_portfolio_simulation.py \
+  --start 2026-10-01 \
+  --end 2026-10-21
+```
+
+The end timestamp is exclusive, so `2026-10-21` includes observations through
+20 October. Do not rerun the optimiser with October data or revise the frozen
+parameters after inspecting this result.
+
+Outputs beneath `results/portfolio_simulation/` include `decisions.csv`,
+`fills.csv`, `trades.csv`, `equity_curve.csv`, `performance_summary.csv`,
+`asset_summary.csv`, risk and FX diagnostics, and a reproducibility manifest.
+Positions remain open at the final close to match a live-period snapshot. Raw
+prices are used for execution and valuation; separate dividend cash flows are
+not yet present in the source data and are recorded as excluded in the manifest.
 
 ## Setup
 
@@ -315,7 +659,7 @@ Add the Alpaca credentials generated in the Alpaca dashboard:
 ```text
 ALPACA_API_KEY=your_key
 ALPACA_SECRET_KEY=your_secret
-ALPACA_DATA_FEED=sip
+ALPACA_DATA_FEED=iex
 ```
 
 The `.env` file is ignored by Git. Do not place credentials directly in source
@@ -346,6 +690,10 @@ python run_market_data_pipeline.py --help
 python run_strategy_backtest.py --help
 python run_parameter_experiments.py --help
 python run_strategy_optimizer.py --help
+python run_two_week_strategy_optimization.py --help
+python run_fx_ingestion.py --help
+python run_portfolio_weights.py --help
+python run_portfolio_simulation.py --help
 ```
 
 ### Ingestion options
@@ -353,7 +701,7 @@ python run_strategy_optimizer.py --help
 | Argument | Meaning |
 |---|---|
 | `--provider NAME` | Select `alpaca`, `binance`, `yahoo`, or `moomoo`; canonical provider names also work |
-| `--symbol SYMBOL` | Select `SPY`, `TLT`, `BTCUSDT`, `ES3.SI`, or `SG.ES3` |
+| `--symbol SYMBOL` | Select `SPY`, `BTCUSDT`, `ES3.SI`, `SG.ES3`, or optional `TLT` |
 | `--list-instruments` | List every configured provider-symbol pair and exit |
 | `--start TIMESTAMP` | Inclusive UTC start |
 | `--end TIMESTAMP` | Exclusive UTC end |
@@ -378,16 +726,55 @@ data is unavailable.
 
 | Argument | Meaning |
 |---|---|
-| Repeated `--input-dir PATH` | Replace the four default selected-source directories |
+| Repeated `--input-dir PATH` | Replace the three default selected-source directories |
 | `--output-file PATH` | Canonical CSV; default `data/canonical/market_bars_30m.csv` |
 | `--summary-file PATH` | JSON summary; default `data/canonical/consolidation_summary.json` |
-| `--allow-partial` | Permit consolidation when fewer than all four instruments are supplied |
+| `--allow-partial` | Permit consolidation when fewer than all three instruments are supplied |
 
 ### Orchestrator option
 
 | Argument | Meaning |
 |---|---|
 | `--config PATH` | Workflow JSON; default `config/market_data_pipeline.json` |
+
+Download, aggregate, backfill, and consolidate the evaluation-period data
+without modifying the frozen training/validation files:
+
+```bash
+python run_market_data_pipeline.py \
+  --config config/october_live_data_pipeline.json
+```
+
+This writes provider-specific files below `data/staging/october_live/` and the
+live-only canonical file to
+`data/canonical/market_bars_30m_october_live.csv`. It then combines those live
+outputs with the configured historical staging directories and refreshes
+`data/canonical/market_bars_30m_simulation_live_to_date.csv`, which is the
+default input for portfolio sizing and simulation. Its start is fixed at
+1 October 2026 and its omitted end means the latest completed delayed bar at
+the time of each run. Rerunning the command does not overwrite
+`market_bars_30m_training_validation.csv`.
+
+### Training, validation, and live data separation
+
+`data/canonical/market_bars_30m_training_validation.csv` is the frozen
+pre-October dataset used for strategy training and validation. Its ES3.SI rows
+come from
+`data/staging/combined_history/yahoo_finance/ES3_SI/market_bars_30m_with_backfill.csv`,
+not from the October-live staging directory. That combined STI history merges
+the earlier and later Yahoo batches, removes duplicate overlaps, and covers
+6 July 2026 through 30 September 2026. The exact inputs and row ranges are
+recorded in
+`data/canonical/consolidation_summary_training_validation.json`.
+
+`data/canonical/market_bars_30m_october_live.csv` contains only evaluation-period
+bars from 1 October onward. The separate
+`data/canonical/market_bars_30m_simulation_live_to_date.csv` appends historical
+bars before the October bars solely so the strategies and sizing engine have
+enough warm-up observations. Portfolio simulation must still be run with
+`--start 2026-10-01`, so no pre-October trade, position, cash flow, or P&L is
+included in the evaluation result. October data must not be used to retrain or
+reselect the frozen strategy parameters.
 
 ## Test provider connections
 
@@ -397,7 +784,6 @@ also test standardization, validation, and CSV writing:
 ```bash
 python run_ingestion.py --list-instruments
 python run_ingestion.py --provider alpaca --symbol SPY --lookback-days 7
-python run_ingestion.py --provider alpaca --symbol TLT --lookback-days 7
 python run_ingestion.py --provider binance --symbol BTCUSDT --lookback-days 2
 python run_ingestion.py --provider yahoo --symbol ES3.SI --lookback-days 7
 ```
@@ -442,6 +828,16 @@ Each item in the configuration supports one of two range forms:
 }
 ```
 
+An explicit start with no end uses the latest completed delayed bar:
+
+```json
+{
+  "provider": "alpaca",
+  "symbol": "SPY",
+  "start": "2026-10-01T00:00:00Z"
+}
+```
+
 or a rolling lookback:
 
 ```json
@@ -480,8 +876,6 @@ DATA_END="2026-09-02T00:00:00Z"
 
 python run_ingestion.py --provider alpaca --symbol SPY \
   --start "$DATA_START" --end "$DATA_END"
-python run_ingestion.py --provider alpaca --symbol TLT \
-  --start "$DATA_START" --end "$DATA_END"
 python run_ingestion.py --provider binance --symbol BTCUSDT \
   --start "$DATA_START" --end "$DATA_END"
 python run_ingestion.py --provider yahoo --symbol ES3.SI \
@@ -493,8 +887,6 @@ Aggregate each staging directory independently:
 ```bash
 python run_aggregation.py --input-dir data/staging/alpaca_market_data/SPY \
   --output-dir data/staging/alpaca_market_data/SPY
-python run_aggregation.py --input-dir data/staging/alpaca_market_data/TLT \
-  --output-dir data/staging/alpaca_market_data/TLT
 python run_aggregation.py --input-dir data/staging/binance_spot/BTCUSDT \
   --output-dir data/staging/binance_spot/BTCUSDT
 python run_aggregation.py --input-dir data/staging/yahoo_finance/ES3_SI \
@@ -506,35 +898,32 @@ Apply backfill independently so no provider can fill another provider's bars:
 ```bash
 python run_backfill.py --input-dir data/staging/alpaca_market_data/SPY \
   --output-dir data/staging/alpaca_market_data/SPY
-python run_backfill.py --input-dir data/staging/alpaca_market_data/TLT \
-  --output-dir data/staging/alpaca_market_data/TLT
 python run_backfill.py --input-dir data/staging/binance_spot/BTCUSDT \
   --output-dir data/staging/binance_spot/BTCUSDT
 python run_backfill.py --input-dir data/staging/yahoo_finance/ES3_SI \
   --output-dir data/staging/yahoo_finance/ES3_SI
 ```
 
-Finally, consolidate the four selected sources:
+Finally, consolidate the three selected sources:
 
 ```bash
 python run_consolidation.py
 ```
 
-The default consolidation selects Alpaca SPY and TLT, Binance BTCUSDT, and
-Yahoo ES3.SI. To replace ES3 with another provider later, pass all selected
+The default consolidation selects Alpaca SPY, Binance BTCUSDT, and Yahoo
+ES3.SI. To replace ES3 with another provider later, pass all selected
 directories explicitly:
 
 ```bash
 python run_consolidation.py \
   --input-dir data/staging/alpaca_market_data/SPY \
-  --input-dir data/staging/alpaca_market_data/TLT \
   --input-dir data/staging/binance_spot/BTCUSDT \
   --input-dir path/to/the/replacement/es3/directory
 ```
 
 Consolidation rejects duplicate bar keys and rejects more than one provider for
 the same `instrument_id`. It unions the rows in long format and does not create
-artificial observations while SPY, TLT, or ES3 is closed.
+artificial observations while SPY or ES3 is closed.
 
 ## Outputs
 
@@ -626,7 +1015,7 @@ data/canonical/consolidation_summary.json
 `market_bars_30m.csv` is the long-format union of the selected primary source
 for each instrument. It retains `source`, `bar_origin`, backfill provenance, and
 quality columns. Rows are not aligned into a wide matrix at this stage because
-the four assets do not all share the same trading session. The summary records
+the three assets do not all share the same trading session. The summary records
 row counts, date coverage, source symbols, and bar origins for each instrument.
 
 ## Backfill rules
@@ -682,8 +1071,8 @@ silently.
 | `quality_status` | `pass` or `warning` for accepted rows |
 | `quality_flags` | Semicolon-separated warning explanations |
 
-The same schema does not make volume directly comparable. SPY and TLT volume is
-shares, SG.ES3 volume is ETF units, and BTCUSDT volume is bitcoin.
+The same schema does not make volume directly comparable. SPY volume is shares,
+SG.ES3 volume is ETF units, and BTCUSDT volume is bitcoin.
 
 Use `adjusted_close` for historical returns, volatility, momentum, RSI, and
 other close-based model features. Use raw `open`/`close` for simulated or live
@@ -705,7 +1094,7 @@ Rows are rejected when they contain:
 
 Zero volume and an intrabar range above 20% are retained as warnings.
 
-The session check uses the `XNYS` US-equity calendar for SPY and TLT, `XSES`
+The session check uses the `XNYS` US-equity calendar for SPY, `XSES`
 for SG.ES3, and a continuous UTC calendar for BTCUSDT. Regular session hours,
 exchange breaks, weekends, holidays, and early closes determine which bars
 should exist. A weekend or holiday produces no rejected bars because no market

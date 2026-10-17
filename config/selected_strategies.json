@@ -1,0 +1,46 @@
+{
+  "configuration_status": "frozen_final_training_validation_selection",
+  "signal_timing": "decision_after_bar_close_execute_at_next_eligible_bar_open",
+  "selection_note": "The SPY and expanded STI grids were screened on their configured training windows without a per-window trade filter. This pair had the highest after-cost joint validation return under the final history-confidence sizing rule. Only the configured training and validation observations were used for candidate ranking and pair selection.",
+  "assets": {
+    "spy_usd": {
+      "signal_source": "rule_based",
+      "strategy": "momentum",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "spy_usd__momentum_0041",
+      "parameters": {
+        "fast_window": 8,
+        "slow_window": 16,
+        "momentum_lookback": 8,
+        "entry_threshold": 0.0025,
+        "exit_threshold": 0.0
+      },
+      "selection_source": "training_shortlist_and_joint_validation"
+    },
+    "sti_es3_sgd": {
+      "signal_source": "rule_based",
+      "strategy": "mean_reversion",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "sti_es3_sgd__mean_reversion_0052",
+      "parameters": {
+        "window": 16,
+        "entry_z_score": -1.25,
+        "exit_z_score": 0.25,
+        "minimum_holding_bars": 4,
+        "cooldown_bars": 4,
+        "maximum_holding_bars": 20
+      },
+      "selection_source": "expanded_training_grid_and_joint_validation"
+    },
+    "btc_usdt": {
+      "signal_source": "external_csv",
+      "decision_interval_minutes": 30,
+      "path": "data/signals/btc_signals.csv",
+      "status": "awaiting_teammate",
+      "required_columns": [
+        "bar_open_time_utc",
+        "target_position"
+      ]
+    }
+  }
+}

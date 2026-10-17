@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-file",
         type=Path,
         default=Path(
-            "data/canonical/market_bars_30m_backtest_2026-09-30.csv"
+            "data/canonical/market_bars_30m_training_validation.csv"
         ),
     )
     parser.add_argument(

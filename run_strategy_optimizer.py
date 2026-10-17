@@ -1,4 +1,4 @@
-"""Optimise SPY momentum and STI mean-reversion on development folds only."""
+"""Optimise SPY momentum and STI mean-reversion on training folds only."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-file",
         type=Path,
-        default=Path("data/canonical/market_bars_30m_backtest_2026-09-30.csv"),
+        default=Path("data/canonical/market_bars_30m_training_validation.csv"),
         help="Canonical 30-minute CSV used by the strategy backtester.",
     )
     parser.add_argument(
@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--validate-selected",
         action="store_true",
         help=(
-            "After development-only selection, evaluate each winner once on its "
+            "After training-only selection, evaluate each winner once on its "
             "configured validation period. Validation never affects ranking."
         ),
     )
@@ -109,19 +109,23 @@ def _folds_from_config(
     asset_config: dict[str, Any],
     official_test_start: pd.Timestamp,
 ) -> list[FoldDefinition]:
-    development = asset_config.get("development_period", {})
-    development_start = _timestamp(
-        development.get("start"), f"{instrument_id} development start"
+    training = asset_config.get(
+        "training_period", asset_config.get("development_period", {})
     )
-    development_end = _timestamp(
-        development.get("end"), f"{instrument_id} development end"
+    training_start = _timestamp(
+        training.get("start"), f"{instrument_id} training start"
     )
-    if development_end > official_test_start:
-        raise ValueError(f"{instrument_id} development period enters official test data")
+    training_end = _timestamp(
+        training.get("end"), f"{instrument_id} training end"
+    )
+    if training_end > official_test_start:
+        raise ValueError(f"{instrument_id} training period enters official test data")
 
-    raw_folds = asset_config.get("development_folds")
+    raw_folds = asset_config.get(
+        "training_folds", asset_config.get("development_folds")
+    )
     if not isinstance(raw_folds, list) or not raw_folds:
-        raise ValueError(f"{instrument_id} must define development_folds")
+        raise ValueError(f"{instrument_id} must define training_folds")
 
     folds: list[FoldDefinition] = []
     previous_end: pd.Timestamp | None = None
@@ -135,12 +139,13 @@ def _folds_from_config(
             fold_id=fold_id,
             start=_timestamp(raw.get("start"), f"{fold_id} start"),
             end=_timestamp(raw.get("end"), f"{fold_id} end"),
+            phase="training",
         )
         fold.validate()
-        if fold.start < development_start or fold.end > development_end:
+        if fold.start < training_start or fold.end > training_end:
             raise ValueError(
                 f"Fold {fold_id!r} lies outside the {instrument_id} "
-                "development period"
+                "training period"
             )
         if previous_end is not None and fold.start < previous_end:
             raise ValueError(f"Development folds overlap at {fold_id!r}")
@@ -162,12 +167,15 @@ def _validation_fold(
         phase="validation",
     )
     fold.validate()
-    development_end = _timestamp(
-        asset_config.get("development_period", {}).get("end"),
-        f"{instrument_id} development end",
+    training_period = asset_config.get(
+        "training_period", asset_config.get("development_period", {})
     )
-    if fold.start < development_end:
-        raise ValueError(f"{instrument_id} validation overlaps development")
+    training_end = _timestamp(
+        training_period.get("end"),
+        f"{instrument_id} training end",
+    )
+    if fold.start < training_end:
+        raise ValueError(f"{instrument_id} validation overlaps training")
     if fold.end > official_test_start:
         raise ValueError(f"{instrument_id} validation enters official test data")
     return fold
@@ -180,7 +188,7 @@ def _selected_record(candidate: Any, ranking: pd.DataFrame) -> dict[str, Any]:
             "candidate_id": None,
             "strategy": None,
             "parameters": None,
-            "development_robustness_score": None,
+            "training_robustness_score": None,
         }
     row = ranking.loc[ranking["candidate_id"].eq(candidate.candidate_id)].iloc[0]
     return {
@@ -188,7 +196,7 @@ def _selected_record(candidate: Any, ranking: pd.DataFrame) -> dict[str, Any]:
         "candidate_id": candidate.candidate_id,
         "strategy": candidate.strategy_name,
         "parameters": candidate.parameters,
-        "development_robustness_score": float(row["robustness_score"]),
+        "training_robustness_score": float(row["robustness_score"]),
     }
 
 
@@ -226,7 +234,7 @@ def main() -> None:
     if args.max_candidates is not None and args.validate_selected:
         raise ValueError(
             "--validate-selected cannot be combined with --max-candidates; "
-            "complete the full development search before validation"
+            "complete the full training search before validation"
         )
     if args.top < 1 or args.progress_every < 1:
         raise ValueError("--top and --progress-every must be at least 1")
@@ -301,7 +309,7 @@ def main() -> None:
         all_fold_results.append(fold_results)
         all_rankings.append(ranking)
 
-        print(f"\nTop {instrument_id} development candidates")
+        print(f"\nTop {instrument_id} training candidates")
         _display_ranking(ranking, args.top)
         if winner is None:
             print(f"No reliable candidate selected for {instrument_id}.")
@@ -335,7 +343,7 @@ def main() -> None:
     generated_at = pd.Timestamp.now(tz="UTC").isoformat()
     selection_output = {
         "generated_at_utc": generated_at,
-        "selection_basis": "development_folds_only",
+        "selection_basis": "training_folds_only",
         "search_complete": args.max_candidates is None,
         "candidate_limit_applied": args.max_candidates,
         "validation_used_for_ranking": False,

@@ -34,14 +34,25 @@ INSTRUMENT_ALIASES = {
     "es3.si": "sti_es3_sgd",
     "sg.es3": "sti_es3_sgd",
     "sti_es3_sgd": "sti_es3_sgd",
+    "btc": "btc_usdt",
+    "btcusdt": "btc_usdt",
+    "btc_usdt": "btc_usdt",
 }
 
 PROJECT_COST_ASSET_IDS = {
     "spy_usd": "SP500_ETF",
     "sti_es3_sgd": "STI_ETF",
+    "btc_usdt": "BTC",
 }
 
 EQUITY_TRADING_DAYS_PER_YEAR = 252
+CONTINUOUS_TRADING_DAYS_PER_YEAR = 365
+
+INSTRUMENT_QUANTITY_STEPS = {
+    "spy_usd": 1.0,
+    "sti_es3_sgd": 1.0,
+    "btc_usdt": 0.000001,
+}
 
 
 class ProjectCostModel:
@@ -104,7 +115,7 @@ def resolve_instrument_id(value: str) -> str:
     try:
         return INSTRUMENT_ALIASES[normalized]
     except KeyError as error:
-        supported = "SPY, ES3.SI, spy_usd, sti_es3_sgd"
+        supported = "SPY, ES3.SI, BTCUSDT, spy_usd, sti_es3_sgd, btc_usdt"
         raise ValueError(
             f"Unsupported instrument {value!r}; choose one of: {supported}"
         ) from error
@@ -195,7 +206,7 @@ def delayed_execution_targets(signals: pd.DataFrame) -> pd.Series:
 
 
 def infer_periods_per_year(bars: pd.DataFrame) -> int:
-    """Infer equity 30-minute periods from the median local session length."""
+    """Infer annual 30-minute periods for exchange or continuous trading."""
     if "session_date_local" in bars.columns:
         session = bars["session_date_local"].astype("string")
     else:
@@ -204,7 +215,16 @@ def infer_periods_per_year(bars: pd.DataFrame) -> int:
     if bars_per_session.empty:
         raise ValueError("Cannot annualize an empty backtest")
     typical_session = int(round(float(bars_per_session.median())))
-    return typical_session * EQUITY_TRADING_DAYS_PER_YEAR
+    continuous = (
+        "instrument_id" in bars.columns
+        and set(bars["instrument_id"].dropna().astype(str)) == {"btc_usdt"}
+    )
+    trading_days = (
+        CONTINUOUS_TRADING_DAYS_PER_YEAR
+        if continuous
+        else EQUITY_TRADING_DAYS_PER_YEAR
+    )
+    return typical_session * trading_days
 
 
 def _strategy_signals(
@@ -332,7 +352,13 @@ def run_strategy_backtest(
             raise ValueError("flat_fee_bps must not be negative")
         cost_model = CostModel(flat_fee_bps, slippage_bps)
 
-    quantity_steps = {instrument_id: 1.0}
+    try:
+        quantity_step = INSTRUMENT_QUANTITY_STEPS[instrument_id]
+    except KeyError as error:
+        raise ValueError(
+            f"No quantity step is configured for {instrument_id}"
+        ) from error
+    quantity_steps = {instrument_id: quantity_step}
     result = run_backtest(
         positions,
         execution_bars,

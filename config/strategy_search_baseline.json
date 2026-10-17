@@ -1,0 +1,46 @@
+{
+  "configuration_status": "pre_search_baseline_input",
+  "signal_timing": "decision_after_bar_close_execute_at_next_eligible_bar_open",
+  "selection_note": "Neutral baseline supplied to the grid-search workflow. It is an input comparator, not the final selected strategy configuration.",
+  "assets": {
+    "spy_usd": {
+      "signal_source": "rule_based",
+      "strategy": "momentum",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "spy_usd__baseline_input",
+      "parameters": {
+        "fast_window": 4,
+        "slow_window": 16,
+        "momentum_lookback": 8,
+        "entry_threshold": 0.0025,
+        "exit_threshold": 0.0
+      },
+      "selection_source": "initial_development_baseline"
+    },
+    "sti_es3_sgd": {
+      "signal_source": "rule_based",
+      "strategy": "mean_reversion",
+      "decision_interval_minutes": 120,
+      "selected_candidate_id": "sti_es3_sgd__baseline_input",
+      "parameters": {
+        "window": 8,
+        "entry_z_score": -1.5,
+        "exit_z_score": 0.0,
+        "minimum_holding_bars": 4,
+        "cooldown_bars": 4,
+        "maximum_holding_bars": 20
+      },
+      "selection_source": "initial_development_baseline"
+    },
+    "btc_usdt": {
+      "signal_source": "external_csv",
+      "decision_interval_minutes": 30,
+      "path": "data/signals/btc_signals.csv",
+      "status": "awaiting_teammate",
+      "required_columns": [
+        "bar_open_time_utc",
+        "target_position"
+      ]
+    }
+  }
+}

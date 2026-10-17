@@ -97,7 +97,7 @@ def _prepare_source_bars(bars: pd.DataFrame) -> pd.DataFrame:
     if work.duplicated(subset=duplicate_key).any():
         raise ValueError("Accepted source data contains duplicate five-minute bars")
 
-    known_ids = {instrument.instrument_id for instrument in INSTRUMENTS}
+    known_ids = {instrument.instrument_id for instrument in AVAILABLE_INSTRUMENTS}
     unknown_ids = set(work["instrument_id"].dropna()) - known_ids
     if unknown_ids:
         raise ValueError(f"Unknown instrument identifiers: {sorted(unknown_ids)}")

@@ -17,6 +17,8 @@ class MeanReversionParameters:
     entry_z_score: float = -1.5
     exit_z_score: float = 0.0
     maximum_holding_bars: int | None = 52
+    minimum_holding_bars: int = 0
+    cooldown_bars: int = 0
 
     def validate(self) -> None:
         if self.window < 2:
@@ -28,6 +30,17 @@ class MeanReversionParameters:
             and self.maximum_holding_bars < 1
         ):
             raise ValueError("maximum_holding_bars must be at least 1")
+        if self.minimum_holding_bars < 0:
+            raise ValueError("minimum_holding_bars must not be negative")
+        if self.cooldown_bars < 0:
+            raise ValueError("cooldown_bars must not be negative")
+        if (
+            self.maximum_holding_bars is not None
+            and self.minimum_holding_bars > self.maximum_holding_bars
+        ):
+            raise ValueError(
+                "minimum_holding_bars must not exceed maximum_holding_bars"
+            )
 
 
 def _signals_for_instrument(
@@ -49,9 +62,11 @@ def _signals_for_instrument(
 
     position = 0
     holding_bars = 0
+    cooldown_remaining = 0
     signals: list[str] = []
     target_positions: list[int] = []
     holding_periods: list[int] = []
+    cooldown_periods: list[int] = []
     reasons: list[str] = []
 
     for position_index in range(len(work)):
@@ -65,6 +80,10 @@ def _signals_for_instrument(
         elif not bool(row["signal_eligible"]):
             signal = "HOLD"
             reason = "bar_not_signal_eligible"
+        elif position == 0 and cooldown_remaining > 0:
+            cooldown_remaining -= 1
+            signal = "HOLD"
+            reason = "cooldown"
         elif (
             position == 0
             and row["mean_reversion_z_score"] <= parameters.entry_z_score
@@ -75,10 +94,12 @@ def _signals_for_instrument(
             reason = "mean_reversion_entry"
         elif (
             position == 1
+            and holding_bars >= parameters.minimum_holding_bars
             and row["mean_reversion_z_score"] >= parameters.exit_z_score
         ):
             position = 0
             holding_bars = 0
+            cooldown_remaining = parameters.cooldown_bars
             signal = "SELL"
             reason = "mean_reversion_exit"
         elif (
@@ -88,6 +109,7 @@ def _signals_for_instrument(
         ):
             position = 0
             holding_bars = 0
+            cooldown_remaining = parameters.cooldown_bars
             signal = "SELL"
             reason = "maximum_holding_exit"
         elif position == 1:
@@ -100,6 +122,7 @@ def _signals_for_instrument(
         signals.append(signal)
         target_positions.append(position)
         holding_periods.append(holding_bars)
+        cooldown_periods.append(cooldown_remaining)
         reasons.append(reason)
 
     work["strategy_name"] = "mean_reversion"
@@ -107,6 +130,9 @@ def _signals_for_instrument(
     work["target_position"] = pd.Series(target_positions, dtype="int8")
     work["signal_strength"] = -work["mean_reversion_z_score"]
     work["holding_period_bars"] = pd.Series(holding_periods, dtype="int64")
+    work["cooldown_remaining_bars"] = pd.Series(
+        cooldown_periods, dtype="int64"
+    )
     work["signal_reason"] = reasons
     return work
 
