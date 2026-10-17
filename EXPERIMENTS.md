@@ -132,11 +132,42 @@ The combined 11-30 September validation result was:
 |---|---:|
 | Net return | 0.3167% |
 | Net profit on USD 500,000 | USD 1,583.64 |
+| Final equity | USD 501,583.64 |
+| Annualized return | 5.9410% |
+| Annualized volatility | 3.6335% |
+| Sharpe ratio | 1.6065 |
+| Sortino ratio | 2.5283 |
 | Maximum drawdown | -1.0338% |
+| Calmar ratio | 5.7467 |
+| Drawdowns of at least 1% | 1 |
+| Longest drawdown | 8.17 days |
 | Orders | 8 |
 | Completed round trips | 4 |
+| Winning trades | 3 |
+| Losing trades | 1 |
+| Win rate | 75.00% |
+| Average holding period | 98.5 hours |
+| Average profit per completed trade | USD 395.91 |
+| Average return per completed trade | 0.1862% |
+| Profit factor | 1.8878 |
+| Time in market | 69.20% |
 | Transaction costs | USD 198.20 |
+| Transaction costs as percentage of initial capital | 0.0396% |
+| Traded notional | USD 1,523,149.99 |
+| Annualized turnover | 55.42 times equity |
 | Average cash weight | 69.22% |
+| Minimum cash weight | 24.66% |
+
+The annualized return, volatility, Sharpe, Sortino, Calmar, and turnover values
+are extrapolated from a short validation period. They are reported consistently
+with the project metrics but should not be interpreted as stable long-run
+estimates.
+
+| Asset | Completed trades | Winning trades | Net P&L contribution | Transaction costs |
+|---|---:|---:|---:|---:|
+| SPY | 2 | 1 | USD 1,412.97 | USD 5.85 |
+| ES3.SI | 2 | 2 | USD 170.68 | USD 192.35 |
+| BTCUSDT | 0 | 0 | USD 0.00 | USD 0.00 |
 
 STI has a much shorter history than SPY, so its six rolling windows are weak
 evidence and must not be presented as equivalent to SPY's 100 windows.
