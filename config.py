@@ -4,30 +4,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 # --- assets ------------------------------------------------------------------
-# One entry per asset. Rename BTC/ETH/SOL to your three assets.
+# Standalone BTC strategy settings used by run_daily.py and report_metrics.py.
 #   csv          30-min bars for this asset (or one shared CSV + "symbol" below); can be a
 #                list of CSVs (history + live), combined in order, later files win
-#   symbol       value in the CSV's "symbol" column, only if all assets share one CSV
+#   symbol       value in the CSV's instrument column when all assets share one CSV
 #   model_up/down  LightGBM models (point all three to the same files for a pooled model)
 #   weight       share of equity used per unit of signal (weights summing to 1 = no leverage)
 # Optional per-asset strategy overrides: use_vol_model, vol_high, vol_low, mom_rsi, mr_rsi, mr_bb, horizon, allow_short
+BTC_TRAINING_VALIDATION_FILE = (
+    ROOT / "data" / "canonical" / "market_bars_30m_training_validation.csv"
+)
+BTC_LIVE_SIMULATION_FILE = (
+    ROOT / "data" / "canonical" / "market_bars_30m_simulation_live_to_date.csv"
+)
+BTC_INPUT_FILES = [BTC_TRAINING_VALIDATION_FILE]
+if BTC_LIVE_SIMULATION_FILE.exists():
+    BTC_INPUT_FILES.append(BTC_LIVE_SIMULATION_FILE)
+
 ASSETS = {
-    "BTC": {"csv": [ROOT / "data" / "market_bars_30m_with_backfill.csv",           # history
-                    ROOT / "data" / "market_bars_30m_with_backfill_october.csv"],  # live
+    "BTC": {"csv": BTC_INPUT_FILES,
+            "symbol": "btc_usdt",
             "model_up": ROOT / "models" / "btc_up_202607_n100.txt",      # trained to 2026-05-31
             "model_down": ROOT / "models" / "btc_down_202607_n100.txt",  # (run_train_models.py)
-            "weight": 3 / 3},
-#     "ETH": {"csv": ROOT / "data" / "raw" / "eth_30m.csv",
-#             "model_up": ROOT / "models" / "eth_up.txt",
-#             "model_down": ROOT / "models" / "eth_down.txt",
-#             "weight": 1 / 3},
-#     "SOL": {"csv": ROOT / "data" / "raw" / "sol_30m.csv",
-#             "model_up": ROOT / "models" / "sol_up.txt",
-#             "model_down": ROOT / "models" / "sol_down.txt",
-#             "weight": 1 / 3},
+            "weight": 1.0},
 }
 TIME_COL = "bar_open_time_utc"
-SYMBOL_COL = "symbol"
+SYMBOL_COL = "instrument_id"
 BAR_FREQ = "30min"
 LOOKBACK_DAYS = 30                  # history loaded before each day to compute features
 WARMUP_DAYS = 14                    # gap-free history required before trading (EMA200 ~ 4 days x 3)

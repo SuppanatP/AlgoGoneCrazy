@@ -12,6 +12,7 @@ Usage:
   python run_daily.py                              # yesterday (UTC)
   python run_daily.py --date 2026-09-24
   python run_daily.py --start 2026-03-22 --end 2026-09-01   # replay a whole period
+  python run_daily.py --records-dir records/btc_pre_october --start 2026-06-01 --end 2026-09-30
   python run_daily.py --reset --start 2026-10-05   # start trading on Oct 5, run to the latest
                                                    # data (history before it only warms up)
   python run_daily.py --reset --start ...          # delete records and start fresh
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+from pathlib import Path
 
 import lightgbm as lgb
 import numpy as np
@@ -263,7 +265,14 @@ def main(argv=None):
                                     "only used to warm up the features")
     ap.add_argument("--end", help="last day (inclusive), YYYY-MM-DD; default: last day with data")
     ap.add_argument("--reset", action="store_true", help="delete existing records first")
+    ap.add_argument(
+        "--records-dir",
+        help="output directory for state and CSV records; default: records",
+    )
     args = ap.parse_args(argv)
+
+    if args.records_dir:
+        config.RECORDS_DIR = Path(args.records_dir)
 
     if args.reset and config.RECORDS_DIR.exists():
         shutil.rmtree(config.RECORDS_DIR)

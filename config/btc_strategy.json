@@ -1,0 +1,97 @@
+{
+  "configuration_status": "standalone_btc_strategy_baseline",
+  "purpose": "Reproducibility manifest for the existing BTC ML and voting strategy before three-asset integration.",
+  "instrument": {
+    "runtime_asset_id": "BTC",
+    "canonical_instrument_id": "btc_usdt",
+    "bar_interval": "30min",
+    "quote_currency": "USDT"
+  },
+  "data": {
+    "training_validation_file": "data/canonical/market_bars_30m_training_validation.csv",
+    "live_simulation_file": "data/canonical/market_bars_30m_simulation_live_to_date.csv",
+    "timestamp_column": "bar_open_time_utc",
+    "instrument_column": "instrument_id",
+    "warmup_days": 14,
+    "lookback_days": 30
+  },
+  "models": {
+    "up": {
+      "file": "models/btc_up_202607_n100.txt",
+      "sha256": "b26391939389f65015b493d55a3998cd17a9c2af275bef69abb97f0804b1c88e"
+    },
+    "down": {
+      "file": "models/btc_down_202607_n100.txt",
+      "sha256": "5822020364eafa58f297febf133b409ca70f9c238edb7b2d25ed744d248f0843"
+    },
+    "target_horizon_bars": 12,
+    "fixed_trees": 100,
+    "training_start": "2023-09-01T00:00:00Z",
+    "training_end_inclusive": "2026-05-31T23:59:59Z",
+    "validation_start": "2026-06-01T00:00:00Z",
+    "validation_end_inclusive": "2026-07-31T23:59:59Z",
+    "metadata_note": "The original generated model metadata JSON was not committed. These periods are reconstructed from the tracked training command, selected filenames, and config comments."
+  },
+  "strategy_selection": {
+    "tool": "run_rule_search.py",
+    "ranking_period_start": "2026-06-01T00:00:00Z",
+    "ranking_period_end_inclusive": "2026-08-31T23:30:00Z",
+    "reported_test_start": "2026-09-01T00:00:00Z",
+    "reported_test_end_inclusive": "2026-09-30T17:30:00Z",
+    "ranking_metric": "validation_sharpe",
+    "test_used_for_selection": false
+  },
+  "strategy": {
+    "class": "VotingStrategy",
+    "use_volatility_model": true,
+    "volatility_high_threshold": 0.35,
+    "minimum_vote_score": 2.0,
+    "rule_weights": {
+      "rsi": 0.0,
+      "bb": 1.0,
+      "stoch": 1.0,
+      "trend": 0.0,
+      "macd": 0.0,
+      "ret": 1.0,
+      "volume": 1.0,
+      "model": 0.0
+    },
+    "rule_parameters": {
+      "rsi": {"lo": 30.0},
+      "bb": {"lo": 0.1},
+      "stoch": {"lo": 30.0},
+      "ret": {"lag": 12},
+      "volume": {"z": 1.0},
+      "model": {"edge": 0.05}
+    },
+    "allow_short": true,
+    "maximum_holding_bars": 12,
+    "exit_on_opposite": true,
+    "stop_loss_atr": 0.0,
+    "take_profit_atr": 0.0,
+    "partial_take_profit_atr": 2.0,
+    "partial_stop_loss_atr": 0.0,
+    "partial_fraction": 0.5,
+    "partial_entry_minimum_score": 0.0,
+    "partial_entry_size": 0.25,
+    "daily_fallback": true,
+    "fallback_hour_utc": 20,
+    "fallback_size": 0.1,
+    "fallback_holding_bars": 12
+  },
+  "execution": {
+    "timing": "features_through_previous_bar_target_and_execution_at_current_bar_open",
+    "feature_shift_bars": 1,
+    "initial_cash_usd": 100000.0,
+    "strategy_weight": 1.0,
+    "leverage": 1.0,
+    "commission_bps_per_order": 10.0,
+    "slippage_bps_per_order": 0.0,
+    "minimum_commission_usd": 0.0,
+    "position_target_range": [-1.0, 1.0]
+  },
+  "generated_outputs": {
+    "records_policy": "ignored",
+    "results_policy": "ignored"
+  }
+}

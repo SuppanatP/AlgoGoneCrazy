@@ -123,6 +123,8 @@ src/strategy_backtest.py Strategy-to-backtester adapter and output writer
 src/backtest.py          Reused bar-by-bar backtest engine
 src/tracker.py           Reused cash, position, fill, trade, and cost ledger
 src/metrics.py           Reused performance and transaction-cost metrics
+src/features.py          Lagged BTC features shared by training and standalone replay
+src/strategy.py          Stateful BTC ML/regime/voting strategies
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
   october_live_data_pipeline.json  Live extraction plus history/live consolidation
@@ -130,6 +132,7 @@ config/
   two_week_strategy_optimization.json Short-horizon frequencies and compact grids
   portfolio_sizing.json      Frozen history-confidence sizing and quantity steps
   selected_strategies.json   Frozen SPY/STI rules and external BTC interface
+  btc_strategy.json          Existing standalone BTC strategy reproducibility manifest
 test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
 run_aggregation.py       Separate 30m aggregation entry point
@@ -143,6 +146,8 @@ run_two_week_strategy_optimization.py Two-week SPY/STI review entry point
 run_fx_ingestion.py       Downloaded FRED SGD/USD standardization entry point
 run_portfolio_weights.py  Rolling inverse-volatility/equal-weight entry point
 run_portfolio_simulation.py Shared-USD portfolio replay entry point
+run_daily.py              Stateful standalone BTC replay entry point
+report_metrics.py         Standalone BTC metrics and benchmark report
 ```
 
 ## Strategy modules
@@ -637,6 +642,65 @@ Positions remain open at the final close to match a live-period snapshot. Raw
 prices are used for execution and valuation; separate dividend cash flows are
 not yet present in the source data and are recorded as excluded in the manifest.
 
+## Standalone BTC strategy baseline
+
+The existing BTC workflow is separate from the SPY momentum and STI
+mean-reversion modules. It loads the tracked LightGBM up/down models, calculates
+lagged features, combines technical-rule votes, and maintains a stateful target
+through holding periods, partial exits, and a daily fallback. The reproducibility
+manifest is `config/btc_strategy.json`; `config.py` remains the executable
+configuration used by `run_daily.py` and `report_metrics.py`.
+
+The runner reads `btc_usdt` rows from the frozen canonical training/validation
+file. When `data/canonical/market_bars_30m_simulation_live_to_date.csv` exists,
+it is appended as the later source and wins on duplicate timestamps. Both files
+are ignored and supplied separately from the repository.
+
+BTC timing differs from the SPY/STI rule modules. A feature row at timestamp
+`t` uses market data only through `t-1`; the resulting target is executed at the
+raw open of bar `t`. Targets may be full, partial, flat, or short. This standalone
+baseline must not be passed through an additional next-bar delay during later
+portfolio integration.
+
+On macOS, LightGBM also requires the OpenMP runtime:
+
+```bash
+brew install libomp
+python -m pip install -r requirements.txt
+```
+
+Run an isolated short replay without overwriting another run:
+
+```bash
+python run_daily.py \
+  --records-dir records/btc_short \
+  --start 2026-10-01 \
+  --end 2026-10-03
+
+python report_metrics.py \
+  --records records/btc_short \
+  --output-dir results/btc_short \
+  --no-plot
+```
+
+Run the pre-October standalone diagnostic used for integration review:
+
+```bash
+python run_daily.py \
+  --records-dir records/btc_pre_october \
+  --start 2026-06-01 \
+  --end 2026-09-30
+
+python report_metrics.py \
+  --records records/btc_pre_october \
+  --output-dir results/btc_pre_october \
+  --no-plot
+```
+
+The records and reports are generated beneath ignored `records/` and `results/`
+directories. They are not committed. Use a new records directory for each clean
+replay; `--reset` deletes only the selected records directory.
+
 ## Setup
 
 From the repository root:
@@ -694,6 +758,8 @@ python run_two_week_strategy_optimization.py --help
 python run_fx_ingestion.py --help
 python run_portfolio_weights.py --help
 python run_portfolio_simulation.py --help
+python run_daily.py --help
+python report_metrics.py --help
 ```
 
 ### Ingestion options
