@@ -56,6 +56,7 @@ def benchmark(start, end):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--records", default=str(config.RECORDS_DIR))
+    ap.add_argument("--output-dir", default=str(config.RESULTS_DIR))
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--no-plot", action="store_true")
     args = ap.parse_args(argv)
@@ -77,7 +78,7 @@ def main(argv=None):
     print("\nPer asset (strategy):")
     print(per_asset.to_string(float_format=fmt))
 
-    results = Path(config.RESULTS_DIR)
+    results = Path(args.output_dir)
     results.mkdir(parents=True, exist_ok=True)
     table.to_csv(results / "metrics_table.csv")
     per_asset.to_csv(results / "per_asset.csv")

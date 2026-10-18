@@ -27,16 +27,16 @@ from trading_strategy import (  # noqa: E402
 )
 
 
-OFFICIAL_TEST_START_UTC = pd.Timestamp("2026-10-01T00:00:00Z")
+OFFICIAL_TEST_START_UTC = pd.Timestamp("2026-09-30T23:59:59.999999Z")
 
 PERIODS = {
     "spy_usd": {
         "development": ("2023-09-18T00:00:00Z", "2025-10-01T00:00:00Z"),
-        "validation": ("2025-10-01T00:00:00Z", "2026-10-01T00:00:00Z"),
+        "validation": ("2025-10-01T00:00:00Z", "2026-09-30T23:59:59.999999Z"),
     },
     "sti_es3_sgd": {
         "development": ("2026-07-21T00:00:00Z", "2026-09-01T00:00:00Z"),
-        "validation": ("2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"),
+        "validation": ("2026-09-01T00:00:00Z", "2026-09-30T23:59:59.999999Z"),
     },
 }
 

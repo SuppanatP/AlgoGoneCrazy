@@ -1,9 +1,9 @@
 {
-  "official_test_start_utc": "2026-10-01T00:00:00Z",
+  "official_test_start_utc": "2026-09-30T23:59:59.999999Z",
   "period_policy": {
     "training": "Used for grid-search parameter selection and ranking.",
     "validation": "Evaluated only after selection and never used for ranking.",
-    "official_test": "All observations from 2026-10-01 onward are excluded from training and validation."
+    "official_test": "All observations after the configured pre-holdout cutoff are excluded from training and validation."
   },
   "score_weights": {
     "sharpe_stability_penalty": 0.5,
@@ -40,7 +40,7 @@
       ],
       "validation_period": {
         "start": "2025-10-01T00:00:00Z",
-        "end": "2026-10-01T00:00:00Z"
+        "end": "2026-09-30T23:59:59.999999Z"
       },
       "search_space": {
         "fast_window": [8, 13, 26],
@@ -86,7 +86,7 @@
       ],
       "validation_period": {
         "start": "2026-09-01T00:00:00Z",
-        "end": "2026-10-01T00:00:00Z"
+        "end": "2026-09-30T23:59:59.999999Z"
       },
       "search_space": {
         "window": [20, 26, 52],

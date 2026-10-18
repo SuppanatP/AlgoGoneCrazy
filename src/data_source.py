@@ -42,7 +42,7 @@ def _load(path: Path, time_col: str, symbol, symbol_col: str) -> pd.DataFrame:
     """Read and parse the CSV once; re-read only if the file changes on disk."""
     key = (str(path), path.stat().st_mtime, symbol)
     if key not in _CACHE:
-        bars = pd.read_csv(path)
+        bars = pd.read_csv(path, low_memory=False)
         bars.columns = [c.lower() for c in bars.columns]
         if symbol is not None:
             bars = bars[bars[symbol_col] == symbol].drop(columns=symbol_col)

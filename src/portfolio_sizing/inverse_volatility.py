@@ -15,6 +15,7 @@ SUPPORTED_WEIGHTING_METHODS = {
     "capped_confidence_adjusted_inverse_volatility",
     "capped_history_confidence_inverse_volatility",
     "capped_strategy_performance_adjusted_inverse_volatility",
+    "capped_strategy_return_inverse_volatility",
 }
 
 
@@ -22,23 +23,21 @@ def configured_maximum_weight(
     sizing_config: Mapping[str, object],
     instrument_id: str,
 ) -> float:
-    """Return the shared concentration limit, with legacy per-asset fallback."""
-    shared = sizing_config.get("maximum_asset_weight")
-    if shared is not None:
-        maximum = float(shared)
-    else:
-        assets = sizing_config.get("assets")
-        if not isinstance(assets, Mapping) or instrument_id not in assets:
-            raise ValueError(f"No sizing configuration for {instrument_id}")
-        asset_config = assets[instrument_id]
-        if (
-            not isinstance(asset_config, Mapping)
-            or "maximum_weight" not in asset_config
-        ):
-            raise ValueError(
-                "Sizing configuration must set maximum_asset_weight"
-            )
+    """Return an asset-specific concentration limit, with shared fallback."""
+    assets = sizing_config.get("assets")
+    asset_config = (
+        assets.get(instrument_id)
+        if isinstance(assets, Mapping)
+        else None
+    )
+    if isinstance(asset_config, Mapping) and "maximum_weight" in asset_config:
         maximum = float(asset_config["maximum_weight"])
+    elif sizing_config.get("maximum_asset_weight") is not None:
+        maximum = float(sizing_config["maximum_asset_weight"])
+    else:
+        raise ValueError(
+            f"Sizing configuration must set a maximum weight for {instrument_id}"
+        )
     if not 0 < maximum <= 1:
         raise ValueError("maximum_asset_weight must be in (0, 1]")
     return maximum
@@ -105,8 +104,10 @@ class InverseVolatilitySettings:
             raise ValueError("target_gross_exposure must be in (0, 1]")
         if self.volatility_floor <= 0:
             raise ValueError("volatility_floor must be positive")
-        if self.rebalance_frequency not in {"daily", "weekly"}:
-            raise ValueError("rebalance_frequency must be daily or weekly")
+        if self.rebalance_frequency not in {"daily", "weekly", "initial_only"}:
+            raise ValueError(
+                "rebalance_frequency must be daily, weekly, or initial_only"
+            )
         if self.confidence_full_observations < 1:
             raise ValueError("confidence_full_observations must be positive")
         if self.confidence_power <= 0:
@@ -212,7 +213,9 @@ def rebalance_dates(
     end_date = _utc_date(end, "end")
     if end_date <= start_date:
         raise ValueError("end must be later than start")
-    if frequency == "daily":
+    if frequency == "initial_only":
+        scheduled = pd.DatetimeIndex([start_date])
+    elif frequency == "daily":
         scheduled = pd.date_range(
             start=start_date,
             end=end_date - pd.Timedelta(days=1),
@@ -344,6 +347,31 @@ def _volatility_estimate(
     )
     if not np.isfinite(annualized):
         raise ValueError("volatility is not finite")
+    effective = max(annualized, settings.volatility_floor)
+    return observation_count, annualized, effective
+
+
+def _strategy_return_volatility_estimate(
+    returns: pd.Series,
+    as_of_date: pd.Timestamp,
+    settings: InverseVolatilitySettings,
+    asset_settings: AssetRiskSettings,
+) -> tuple[int, float, float]:
+    """Estimate point-in-time volatility from standalone strategy returns."""
+    history = pd.to_numeric(
+        returns.loc[returns.index < as_of_date], errors="coerce"
+    ).dropna().tail(settings.lookback_observations)
+    observation_count = int(len(history))
+    if observation_count < settings.minimum_observations:
+        raise InsufficientHistoryError(
+            observation_count,
+            settings.minimum_observations,
+        )
+    annualized = float(
+        history.std(ddof=1) * np.sqrt(asset_settings.annualization_periods)
+    )
+    if not np.isfinite(annualized):
+        raise ValueError("strategy return volatility is not finite")
     effective = max(annualized, settings.volatility_floor)
     return observation_count, annualized, effective
 
@@ -483,13 +511,14 @@ def build_weight_schedule(
         raise ValueError(f"Daily prices are missing assets: {sorted(missing_assets)}")
     for asset, item in asset_settings.items():
         item.validate(asset)
-    if (
-        settings.method
-        == "capped_strategy_performance_adjusted_inverse_volatility"
-    ):
+    strategy_return_methods = {
+        "capped_strategy_performance_adjusted_inverse_volatility",
+        "capped_strategy_return_inverse_volatility",
+    }
+    if settings.method in strategy_return_methods:
         if strategy_returns is None:
             raise ValueError(
-                "strategy_returns are required for strategy-performance sizing"
+                "strategy_returns are required for strategy-return sizing"
             )
         missing_strategy_assets = set(assets) - set(strategy_returns.columns)
         if missing_strategy_assets:
@@ -517,12 +546,24 @@ def build_weight_schedule(
 
         for asset in assets:
             try:
-                observations, annualized, effective = _volatility_estimate(
-                    daily_prices[asset],
-                    as_of_date,
-                    settings,
-                    asset_settings[asset],
-                )
+                if settings.method == "capped_strategy_return_inverse_volatility":
+                    observations, annualized, effective = (
+                        _strategy_return_volatility_estimate(
+                            strategy_returns[asset],
+                            as_of_date,
+                            settings,
+                            asset_settings[asset],
+                        )
+                    )
+                    volatility_source = "standalone_strategy_returns_after_costs"
+                else:
+                    observations, annualized, effective = _volatility_estimate(
+                        daily_prices[asset],
+                        as_of_date,
+                        settings,
+                        asset_settings[asset],
+                    )
+                    volatility_source = "base_currency_adjusted_close_returns"
                 effective_volatility[asset] = effective
                 history_observations = observations
                 performance_observations = observations
@@ -584,6 +625,7 @@ def build_weight_schedule(
                         "return_observations": observations,
                         "annualized_volatility": annualized,
                         "effective_volatility": effective,
+                        "volatility_source": volatility_source,
                         "history_observations": history_observations,
                         "performance_observations": performance_observations,
                         "annualized_performance_sharpe": annualized_sharpe,
@@ -604,6 +646,12 @@ def build_weight_schedule(
                         ),
                         "annualized_volatility": np.nan,
                         "effective_volatility": np.nan,
+                        "volatility_source": (
+                            "standalone_strategy_returns_after_costs"
+                            if settings.method
+                            == "capped_strategy_return_inverse_volatility"
+                            else "base_currency_adjusted_close_returns"
+                        ),
                         "history_observations": 0,
                         "performance_observations": 0,
                         "annualized_performance_sharpe": np.nan,
@@ -613,7 +661,10 @@ def build_weight_schedule(
                 )
 
         if date_valid:
-            if settings.method == "capped_inverse_volatility":
+            if settings.method in {
+                "capped_inverse_volatility",
+                "capped_strategy_return_inverse_volatility",
+            }:
                 allocation_scores = {
                     asset: 1.0 / effective_volatility[asset]
                     for asset in assets

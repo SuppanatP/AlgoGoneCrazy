@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import timedelta
 import json
 import sys
 from pathlib import Path
@@ -25,6 +26,11 @@ from src.portfolio_sizing import (  # noqa: E402
     daily_adjusted_closes,
     load_fx_rates,
     rebalance_dates,
+)
+from src.market_data.costs import load_cost_assumptions  # noqa: E402
+from src.portfolio_simulation import (  # noqa: E402
+    build_execution_signals,
+    daily_strategy_returns_after_costs,
 )
 
 
@@ -53,6 +59,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--config-file",
         type=Path,
         default=Path("config/portfolio_sizing.json"),
+    )
+    parser.add_argument(
+        "--strategy-config",
+        type=Path,
+        default=Path("config/selected_strategies.json"),
+    )
+    parser.add_argument(
+        "--cost-config",
+        type=Path,
+        default=Path("config/cost_assumptions.json"),
     )
     parser.add_argument(
         "--fx-file",
@@ -86,6 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(SUPPORTED_WEIGHTING_METHODS),
         help="Override the weighting method configured in portfolio_sizing.json.",
     )
+    parser.add_argument(
+        "--allow-missing-external",
+        action="store_true",
+        help="Allow missing external targets only for incomplete diagnostics.",
+    )
+    parser.add_argument("--slippage-bps", type=float, default=0.0)
     return parser
 
 
@@ -142,7 +164,7 @@ def _default_range(prices: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp]:
     if any(value is None for value in first_dates + last_dates):
         raise ValueError("At least one selected asset has no daily prices")
     start = max(first_dates)
-    end = min(last_dates) + pd.Timedelta(days=1)
+    end = min(last_dates) + timedelta(days=1)
     if end <= start:
         raise ValueError("Selected assets have no overlapping daily date range")
     return pd.Timestamp(start), pd.Timestamp(end)
@@ -179,6 +201,8 @@ def _validate_quote_currencies(
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.slippage_bps < 0:
+        raise ValueError("slippage-bps must not be negative")
     config = _read_json(args.config_file)
     configured_assets = config.get("assets")
     if not isinstance(configured_assets, dict) or not configured_assets:
@@ -259,6 +283,11 @@ def main() -> None:
         raise ValueError("static_rates_to_base must be a JSON object")
 
     canonical = pd.read_csv(args.input_file, low_memory=False)
+    canonical["bar_open_time_utc"] = pd.to_datetime(
+        canonical["bar_open_time_utc"], errors="coerce", utc=True
+    )
+    if canonical["bar_open_time_utc"].isna().any():
+        raise ValueError("Canonical data contains invalid bar_open_time_utc values")
     _validate_quote_currencies(canonical, quote_currencies)
     daily_native_prices = daily_adjusted_closes(canonical, instruments)
     fx_rates = (
@@ -277,11 +306,52 @@ def main() -> None:
     start = _utc_date(args.start, "start") if args.start else default_start
     end = _utc_date(args.end, "end") if args.end else default_end
     dates = rebalance_dates(start, end, policy.rebalance_frequency)
+    strategy_returns = None
+    if policy.method in {
+        "capped_strategy_performance_adjusted_inverse_volatility",
+        "capped_strategy_return_inverse_volatility",
+    }:
+        strategy_config = _read_json(args.strategy_config)
+        cost_assumptions = load_cost_assumptions(args.cost_config)
+        execution_signals, _, _ = build_execution_signals(
+            canonical,
+            strategy_config,
+            instruments,
+            end,
+            project_root=PROJECT_ROOT,
+            allow_missing_external=args.allow_missing_external,
+        )
+        strategy_sizing_config = dict(config)
+        strategy_sizing_config["assets"] = {
+            instrument_id: configured_assets[instrument_id]
+            for instrument_id in instruments
+        }
+        strategy_returns = daily_strategy_returns_after_costs(
+            canonical,
+            execution_signals,
+            (
+                fx_rates
+                if fx_rates is not None
+                else pd.DataFrame(
+                    columns=[
+                        "rate_time_utc",
+                        "quote_currency",
+                        "base_currency",
+                        "rate_to_base",
+                    ]
+                )
+            ),
+            strategy_sizing_config,
+            cost_assumptions,
+            end,
+            slippage_bps=args.slippage_bps,
+        )
     weights, diagnostics = build_weight_schedule(
         daily_prices[instruments],
         dates,
         policy,
         asset_settings,
+        strategy_returns=strategy_returns,
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -295,12 +365,24 @@ def main() -> None:
     weight_output.reset_index().to_csv(weight_path, index=False)
     diagnostics.to_csv(diagnostic_path, index=False)
     conversion_audit.to_csv(conversion_path, index=False)
+    if strategy_returns is not None:
+        strategy_returns.reset_index().to_csv(
+            args.output_dir / "strategy_return_history.csv", index=False
+        )
 
     manifest = {
         "generated_at_utc": pd.Timestamp.now(tz="UTC").isoformat(),
         "input_file": str(args.input_file),
         "fx_file": str(args.fx_file) if args.fx_file is not None else None,
         "config_file": str(args.config_file),
+        "strategy_config": (
+            str(args.strategy_config) if strategy_returns is not None else None
+        ),
+        "cost_config": (
+            str(args.cost_config) if strategy_returns is not None else None
+        ),
+        "slippage_bps": args.slippage_bps,
+        "missing_external_signals_allowed": bool(args.allow_missing_external),
         "output_directory": str(args.output_dir),
         "instruments": instruments,
         "start_utc": start.isoformat(),
@@ -308,11 +390,15 @@ def main() -> None:
         "rebalance_dates_requested": len(dates),
         "rebalance_dates_ready": len(weights),
         "uses_prices_strictly_before_rebalance_date": True,
-        "signals_applied": False,
+        "signals_used_for_risk_estimation": strategy_returns is not None,
+        "signals_applied_to_portfolio": False,
         "quantity_conversion_performed": False,
         "base_currency": base_currency,
         "weighting_method": policy.method,
-        "maximum_asset_weight": configured_maximum_weight(config, instruments[0]),
+        "maximum_asset_weights": {
+            instrument_id: configured_maximum_weight(config, instrument_id)
+            for instrument_id in instruments
+        },
         "reported_currency": base_currency,
         "initial_cash_base": initial_cash_base,
         "starting_positions": starting_positions,

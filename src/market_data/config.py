@@ -94,17 +94,6 @@ INSTRUMENTS = (
 # but are not included in the default all-instrument run.
 ALTERNATIVE_INSTRUMENTS = (
     Instrument(
-        instrument_id="tlt_usd",
-        provider="alpaca_market_data",
-        source_symbol="TLT",
-        asset_class="fixed_income_etf",
-        exchange="NASDAQ",
-        quote_currency="USD",
-        volume_unit="shares",
-        session_timezone="America/New_York",
-        calendar_name="XNYS",
-    ),
-    Instrument(
         instrument_id="spy_usd",
         provider="yahoo_finance",
         source_symbol="SPY",
