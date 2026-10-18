@@ -92,7 +92,7 @@
       "borrowing_cost_bps": 0.0,
       "funding_cost_bps": 0.0,
       "margin_and_liquidation_modelled": false,
-      "integration_decision": "team_confirmation_required_before_combined_portfolio"
+      "integration_decision": "accepted_for_combined_portfolio_simulation_with_zero_modelled_borrowing_and_funding_costs_disclosed_as_a_limitation"
     },
     "commission_bps_per_order": 10.0,
     "slippage_bps_per_order": 0.0,

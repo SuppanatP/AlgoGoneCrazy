@@ -737,10 +737,11 @@ configuration; they are never silently converted to zero.
 The standalone baseline therefore models BTC as short-capable exposure rather
 than spot-only holdings. It caps the strategy at 1.0x gross notional leverage,
 charges the configured 10 bps commission on each order, and currently assumes
-zero borrowing and funding costs. Margin requirements, liquidation, and exchange
-funding payments are not modeled. The team must confirm these assumptions before
-the BTC targets are connected to the combined portfolio; choosing spot-only
-instead requires BTC's own pre-October selection to be rerun with shorting off.
+zero borrowing and funding costs. The team accepted this short-capable treatment
+for the combined project simulation. Margin requirements, liquidation, borrowing
+costs, and exchange funding payments remain unmodeled limitations that must be
+disclosed with the results. Changing to spot-only exposure would require BTC's
+own pre-October selection to be rerun with shorting disabled.
 
 ## Setup
 
