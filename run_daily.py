@@ -12,8 +12,8 @@ Usage:
   python run_daily.py                              # yesterday (UTC)
   python run_daily.py --date 2026-09-24
   python run_daily.py --start 2026-03-22 --end 2026-09-01   # replay a whole period
-  python run_daily.py --records-dir records/btc_pre_october --start 2026-06-01 --end 2026-09-30
-  python run_daily.py --reset --start 2026-10-05   # start trading on Oct 5, run to the latest
+  python run_daily.py --records-dir records/btc_pre_holdout --start 2026-06-01 --end 2026-09-30
+  python run_daily.py --reset --start 2026-09-05   # start trading on Sep 5, run to the latest
                                                    # data (history before it only warms up)
   python run_daily.py --reset --start ...          # delete records and start fresh
 """

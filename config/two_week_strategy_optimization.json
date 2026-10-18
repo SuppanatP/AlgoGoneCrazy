@@ -1,5 +1,5 @@
 {
-  "official_test_start_utc": "2026-10-01T00:00:00Z",
+  "official_test_start_utc": "2026-09-30T23:59:59.999999Z",
   "sessions_per_evaluation_window": 14,
   "window_step_sessions": 5,
   "minimum_trade_window_rate": 0.0,
@@ -8,14 +8,14 @@
   "selection_policy": "Do not exclude candidates for inactivity in individual historical windows. Rank completed candidates by after-cost return and downside metrics; report trade coverage as a diagnostic rather than a selection constraint. Never rank by trade frequency or overwrite selected_strategies.json automatically.",
   "joint_diagnostic_period": {
     "start": "2026-09-11T00:00:00Z",
-    "end": "2026-10-01T00:00:00Z",
-    "role": "Latest known 20-calendar-day diagnostic period before October; not an untouched validation period after redesign."
+    "end": "2026-09-30T23:59:59.999999Z",
+    "role": "Latest known 20-calendar-day pre-holdout diagnostic period; not an untouched validation period after redesign."
   },
   "sizing_comparison_period": {
     "start": "2026-09-07T00:00:00Z",
-    "end": "2026-10-01T00:00:00Z",
+    "end": "2026-09-30T23:59:59.999999Z",
     "session_reference_asset": "spy_usd",
-    "role": "Pre-October rolling-window sensitivity comparison after enough STI history exists for sizing; September is already known and this is not untouched validation."
+    "role": "Pre-holdout rolling-window sensitivity comparison after enough STI history exists for sizing; September is already known and this is not untouched validation."
   },
   "assets": {
     "spy_usd": {
