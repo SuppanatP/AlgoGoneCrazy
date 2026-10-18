@@ -17,7 +17,13 @@ from src.btc_targets import generate_target_row, load_model_pair, prediction_fra
 from src.data_source import fetch_bars, history_problem
 
 
-def export_targets(start: str, end: str, output: str | Path, cfg=config) -> pd.DataFrame:
+def export_targets(
+    start: str,
+    end: str,
+    output: str | Path,
+    cfg=config,
+    input_file: str | Path | None = None,
+) -> pd.DataFrame:
     """Export targets for inclusive UTC dates ``start`` through ``end``."""
     if list(cfg.ASSETS) != ["BTC"]:
         raise ValueError("BTC target export requires config.ASSETS to contain only BTC")
@@ -36,7 +42,7 @@ def export_targets(start: str, end: str, output: str | Path, cfg=config) -> pd.D
         history = fetch_bars(
             day_start - timedelta(days=cfg.LOOKBACK_DAYS),
             day_end,
-            spec["csv"],
+            input_file if input_file is not None else spec["csv"],
             cfg.TIME_COL,
             spec.get("symbol"),
             getattr(cfg, "SYMBOL_COL", "symbol"),
@@ -74,12 +80,19 @@ def main(argv=None):
     parser.add_argument("--start", required=True, help="first UTC date, inclusive")
     parser.add_argument("--end", required=True, help="last UTC date, inclusive")
     parser.add_argument(
+        "--input-file",
+        type=Path,
+        help=(
+            "canonical long-format file; defaults to the canonical files in config.py"
+        ),
+    )
+    parser.add_argument(
         "--output",
         default="records/btc_target_exports/btc_targets.csv",
         help="ignored output CSV path",
     )
     args = parser.parse_args(argv)
-    export_targets(args.start, args.end, args.output)
+    export_targets(args.start, args.end, args.output, input_file=args.input_file)
 
 
 if __name__ == "__main__":

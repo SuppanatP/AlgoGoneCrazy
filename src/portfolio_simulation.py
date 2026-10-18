@@ -191,13 +191,17 @@ def _external_signal(
     path: Path,
     instrument_id: str,
     decision_interval_minutes: int,
+    *,
+    target_column: str = "target_position",
+    execution_timing: str = "decision_after_bar_close_execute_next_open",
+    allow_short: bool = False,
 ) -> pd.DataFrame:
     if decision_interval_minutes < 30 or decision_interval_minutes % 30:
         raise ValueError(
             "decision_interval_minutes must be a positive multiple of 30"
         )
     external = pd.read_csv(path, low_memory=False)
-    required = {"bar_open_time_utc", "target_position"}
+    required = {"bar_open_time_utc", target_column}
     missing = required - set(external.columns)
     if missing:
         raise ValueError(
@@ -212,13 +216,15 @@ def _external_signal(
     external["bar_open_time_utc"] = pd.to_datetime(
         external["bar_open_time_utc"], errors="coerce", utc=True
     )
-    external["target_position"] = pd.to_numeric(
-        external["target_position"], errors="coerce"
+    external[target_column] = pd.to_numeric(
+        external[target_column], errors="coerce"
     )
+    lower_bound = -1.0 if allow_short else 0.0
     invalid = (
         external["bar_open_time_utc"].isna()
-        | external["target_position"].isna()
-        | ~external["target_position"].isin([0, 1])
+        | external[target_column].isna()
+        | external[target_column].lt(lower_bound)
+        | external[target_column].gt(1.0)
     )
     if invalid.any():
         raise ValueError(
@@ -228,9 +234,17 @@ def _external_signal(
         raise ValueError(f"External signal file {path} contains duplicate timestamps")
 
     prepared = prepare_strategy_bars(bars)
-    unknown_times = set(external["bar_open_time_utc"]) - set(
-        prepared["bar_open_time_utc"]
-    )
+    prepared_times = pd.DatetimeIndex(prepared["bar_open_time_utc"])
+    latest_prepared_time = prepared_times.max()
+    external = external.loc[
+        external["bar_open_time_utc"].le(latest_prepared_time)
+    ].copy()
+    unknown_times = set(
+        external.loc[
+            external["bar_open_time_utc"].ge(prepared_times.min()),
+            "bar_open_time_utc",
+        ]
+    ) - set(prepared_times)
     if unknown_times:
         first = min(unknown_times)
         raise ValueError(
@@ -238,18 +252,47 @@ def _external_signal(
             f"{instrument_id} bar open"
         )
     decision = (
-        external.set_index("bar_open_time_utc")["target_position"]
+        external.set_index("bar_open_time_utc")[target_column]
         .sort_index()
-        .reindex(pd.DatetimeIndex(prepared["bar_open_time_utc"]), method="ffill")
+        .reindex(prepared_times, method="ffill")
         .fillna(0.0)
-        .astype("int8")
+        .astype("float64")
     )
     prepared["target_position"] = decision.to_numpy()
-    prepared["execution_target_position"] = delayed_execution_targets(prepared)
+    if execution_timing == "at_bar_open":
+        prepared["execution_target_position"] = prepared["target_position"]
+    elif execution_timing == "decision_after_bar_close_execute_next_open":
+        prepared["execution_target_position"] = delayed_execution_targets(prepared)
+    else:
+        raise ValueError(
+            "External execution_timing must be at_bar_open or "
+            "decision_after_bar_close_execute_next_open"
+        )
     prepared["strategy_name"] = "external"
-    prepared["signal"] = "HOLD"
-    prepared["signal_reason"] = "external_target"
+    external_indexed = external.set_index("bar_open_time_utc").sort_index()
+    prepared_index = prepared_times
+    if "entry_signal" in external_indexed.columns:
+        prepared["signal"] = (
+            pd.to_numeric(
+                external_indexed["entry_signal"], errors="coerce"
+            )
+            .reindex(prepared_index)
+            .fillna(0.0)
+            .to_numpy()
+        )
+    else:
+        prepared["signal"] = "HOLD"
+    if "signal_reason" in external_indexed.columns:
+        prepared["signal_reason"] = (
+            external_indexed["signal_reason"]
+            .reindex(prepared_index)
+            .fillna("external_target_carried_forward")
+            .to_numpy()
+        )
+    else:
+        prepared["signal_reason"] = "external_target"
     prepared["decision_interval_minutes"] = decision_interval_minutes
+    prepared["execution_timing"] = execution_timing
     return prepared
 
 
@@ -292,6 +335,9 @@ def build_execution_signals(
                 parameters,
                 int(asset_config.get("decision_interval_minutes", 30)),
             )
+            signal_frame["execution_timing"] = (
+                "decision_after_bar_close_execute_next_open"
+            )
             status = "ready"
         elif source == "external_csv":
             decision_interval_minutes = int(
@@ -305,6 +351,16 @@ def build_execution_signals(
                     path,
                     instrument_id,
                     decision_interval_minutes,
+                    target_column=str(
+                        asset_config.get("target_column", "target_position")
+                    ),
+                    execution_timing=str(
+                        asset_config.get(
+                            "execution_timing",
+                            "decision_after_bar_close_execute_next_open",
+                        )
+                    ),
+                    allow_short=bool(asset_config.get("allow_short", False)),
                 )
                 status = "ready"
             elif allow_missing_external:
@@ -322,6 +378,12 @@ def build_execution_signals(
                 signal_frame["signal_reason"] = "external_signal_unavailable"
                 signal_frame["decision_interval_minutes"] = (
                     decision_interval_minutes
+                )
+                signal_frame["execution_timing"] = str(
+                    asset_config.get(
+                        "execution_timing",
+                        "decision_after_bar_close_execute_next_open",
+                    )
                 )
                 unavailable.append(instrument_id)
                 status = "awaiting_external_signal"
@@ -347,6 +409,7 @@ def build_execution_signals(
                 "signal",
                 "signal_reason",
                 "decision_interval_minutes",
+                "execution_timing",
             ]
         ].copy()
         output.insert(0, "instrument_id", instrument_id)
@@ -589,7 +652,7 @@ def simulate_portfolio(
     *,
     slippage_bps: float = 0.0,
 ) -> PortfolioSimulationArtifacts:
-    """Replay target changes and weekly rebalances through one USD cash ledger."""
+    """Replay asset targets and configured sleeves through one USD cash ledger."""
     configured_assets = sizing_config["assets"]
     assets = list(configured_assets)
     if risk_weights.empty:
@@ -778,7 +841,11 @@ def simulate_portfolio(
             )
             if should_resize:
                 desired = target_weight * equity_at_open / opens[asset]
-                desired = np.floor(desired / steps[asset]) * steps[asset]
+                desired = (
+                    np.sign(desired)
+                    * np.floor(abs(desired) / steps[asset])
+                    * steps[asset]
+                )
             planned.append(
                 {
                     "timestamp": timestamp,
