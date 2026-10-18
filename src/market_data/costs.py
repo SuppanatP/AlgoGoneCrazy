@@ -11,9 +11,9 @@ uses. Update the JSON, not this file, when a rate changes.
 
 Two commission shapes are supported, matching what real brokers charge:
 - pct-of-trade-value with a minimum (STI ETF, BTC, and the old IBKR Lite
-  assumption for SP500_ETF/TLT).
+  assumption for SP500_ETF).
 - per-share with a minimum and a cap as % of trade value (IBKR Pro Tiered /
-  Pro Fixed -- the current SP500_ETF/TLT assumption under the fund/investor
+  Pro Fixed -- the current SP500_ETF assumption under the fund/investor
   pitch framing; see cost_assumptions.json -> "decision").
 """
 
@@ -137,14 +137,14 @@ def load_cost_assumptions(path: Path = DEFAULT_CONFIG_PATH) -> CostAssumptions:
 
 # Assets that trade in whole shares (round down to the nearest integer).
 # Everything else (BTC) trades in fractional units.
-WHOLE_SHARE_ASSETS = frozenset({"STI_ETF", "SP500_ETF", "TLT"})
+WHOLE_SHARE_ASSETS = frozenset({"STI_ETF", "SP500_ETF"})
 
 
 def position_size(asset_id: str, allocated_capital: float, price: float) -> float:
     """Fixed-capital-allocation position sizing (the project's locked-in convention).
 
     Fully invested when a signal is long/flat: shares = floor(allocated_capital / price)
-    for whole-share assets (SP500_ETF, TLT, STI_ETF); BTC uses fractional units.
+    for whole-share assets (SP500_ETF and STI_ETF); BTC uses fractional units.
     See config/cost_assumptions.json -> "decision" for the rationale.
     """
     if price <= 0:

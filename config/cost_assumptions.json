@@ -43,32 +43,6 @@
       "commission_pct_with_bnb_discount": 0.00075,
       "commission_min": null,
       "notes": "DECISION: use Binance standard rate (0.10%), no BNB discount assumed. commission_pct_with_bnb_discount kept below for reference only -- not the default."
-    },
-    "TLT": {
-      "broker": "IBKR",
-      "pricing_plan": "pro_tiered",
-      "commission_pct": null,
-      "commission_min": {
-        "amount": 0.35,
-        "currency": "USD"
-      },
-      "notes": "DECISION (fund/investor-pitch framing, updated 2026-09-18): use IBKR Pro Tiered (USD 0.0035/share, min USD 0.35/order, capped at 1% of trade value; rate steps down at >300,000 shares/month). IBKR Lite ($0 flat) was the prior assumption under an individual-student-account framing, but Lite eligibility is restricted to Singapore retail investors holding individual/joint/trust accounts with retail-style trading behavior -- it does not extend to an account structured to pitch/manage money for outside investors (a fund vehicle would need an entity/advisor account, which is Pro pricing or better, never Lite). Pro Tiered is used rather than Pro Fixed because Tiered is strictly cheaper than Fixed at every order size (lower per-share rate, lower minimum). Lite is kept below under 'lite' for reference / as the individual-account alternative.",
-      "lite": {
-        "commission_pct": 0.0,
-        "commission_min": null,
-        "notes": "Reference only, not used: valid if this were framed as an individual retail account rather than a fund pitched to investors."
-      },
-      "commission_per_share": 0.0035,
-      "tier_note": "USD 0.0035/share for <=300,000 shares/month; steps down to 0.0020/0.0015/0.0010/0.0005 per share at higher monthly volume tiers",
-      "cap_pct_of_trade_value": 0.01,
-      "pro_fixed": {
-        "commission_per_share": 0.005,
-        "commission_min": {
-          "amount": 1.0,
-          "currency": "USD"
-        },
-        "cap_pct_of_trade_value": 0.01
-      }
     }
   },
   "fx_conversion": {
@@ -89,7 +63,7 @@
   },
   "decision": {
     "note": "Finalized methodology for the backtest simulation -- no more plan/discount ambiguity.",
-    "SP500_ETF_and_TLT_plan": "IBKR Pro Tiered (USD 0.0035/share, min USD 0.35/order, capped at 1% of trade value) -- switched from IBKR Lite because Lite is retail-individual/joint/trust-account-only and doesn't fit a fund-pitching-to-investors framing; a real fund would face Pro-tier (or institutional) pricing, not a $0 retail rate. Pro Tiered chosen over Pro Fixed since Tiered dominates Fixed at every order size.",
+    "SP500_ETF_plan": "IBKR Pro Tiered (USD 0.0035/share, min USD 0.35/order, capped at 1% of trade value) -- switched from IBKR Lite because Lite is retail-individual/joint/trust-account-only and doesn't fit a fund-pitching-to-investors framing; a real fund would face Pro-tier (or institutional) pricing, not a $0 retail rate. Pro Tiered chosen over Pro Fixed since Tiered dominates Fixed at every order size.",
     "BTC_plan": "Binance standard rate, no BNB discount assumed (0.10%, not 0.075%)",
     "FX_fee_plan": "No FX transaction fee is modeled. SGD/USD conversion rates remain required for USD reporting.",
     "position_sizing": "Reserve 5% strategic cash. Cap STI at 10%, cap SPY and BTC at 75% each, and split the available sleeves by inverse standalone after-cost strategy-return volatility using only data before the simulation start. Each strategy's own target intensity scales its sleeve; BTC targets may be negative. Whole shares are used for SPY/STI and BTC uses fractional units.",

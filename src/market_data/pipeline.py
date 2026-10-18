@@ -308,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--symbol",
         help=(
             "Run only one configured provider symbol, for example SPY, "
-            "ES3.SI, SG.ES3, BTCUSDT, or optional TLT."
+            "ES3.SI, SG.ES3, or BTCUSDT."
         ),
     )
     parser.add_argument(

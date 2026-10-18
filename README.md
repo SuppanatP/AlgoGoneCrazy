@@ -466,7 +466,7 @@ Sleeve weights are calculated once at the simulation start from observations
 strictly before that timestamp and then frozen. For an October run, October
 performance therefore cannot influence the allocation. Inactive sleeves remain
 cash instead of being transferred to whichever strategy trades first. Whole
-shares are used for SPY and ES3.SI; BTC uses fractional units. TLT is excluded.
+shares are used for SPY and ES3.SI; BTC uses fractional units.
 
 The portfolio simulation starts with USD 500,000 in cash and no positions.
 There are no later external deposits or withdrawals. Sale proceeds, dividends,
@@ -809,7 +809,7 @@ python report_metrics.py --help
 | Argument | Meaning |
 |---|---|
 | `--provider NAME` | Select `alpaca`, `binance`, `yahoo`, or `moomoo`; canonical provider names also work |
-| `--symbol SYMBOL` | Select `SPY`, `BTCUSDT`, `ES3.SI`, `SG.ES3`, or optional `TLT` |
+| `--symbol SYMBOL` | Select `SPY`, `BTCUSDT`, `ES3.SI`, or `SG.ES3` |
 | `--list-instruments` | List every configured provider-symbol pair and exit |
 | `--start TIMESTAMP` | Inclusive UTC start |
 | `--end TIMESTAMP` | Exclusive UTC end |
