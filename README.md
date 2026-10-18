@@ -701,6 +701,31 @@ The records and reports are generated beneath ignored `records/` and `results/`
 directories. They are not committed. Use a new records directory for each clean
 replay; `--reset` deletes only the selected records directory.
 
+Export the identical stateful target path without creating a portfolio, cash
+ledger, fills, or fees:
+
+```bash
+python export_btc_targets.py \
+  --start 2026-10-01 \
+  --end 2026-10-03 \
+  --output records/btc_target_exports/btc_targets_2026-10-01_to_03.csv
+```
+
+The export contains the model probabilities, active individual rule votes,
+weighted vote score, entry signal, stateful target, and reason for each bar.
+`execution_target_position` applies at `bar_open_time_utc`: its features already
+end at the preceding bar, so downstream portfolio code must not shift or delay
+the BTC target again. Negative values are valid short targets under the current
+configuration; they are never silently converted to zero.
+
+The standalone baseline therefore models BTC as short-capable exposure rather
+than spot-only holdings. It caps the strategy at 1.0x gross notional leverage,
+charges the configured 10 bps commission on each order, and currently assumes
+zero borrowing and funding costs. Margin requirements, liquidation, and exchange
+funding payments are not modeled. The team must confirm these assumptions before
+the BTC targets are connected to the combined portfolio; choosing spot-only
+instead requires BTC's own pre-October selection to be rerun with shorting off.
+
 ## Setup
 
 From the repository root:

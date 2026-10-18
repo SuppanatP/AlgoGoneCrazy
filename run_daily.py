@@ -23,22 +23,23 @@ import argparse
 import shutil
 from pathlib import Path
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
 import config
 from src.backtest import execute_bar
 from src.data_source import fetch_bars, history_problem
-from src.features import build_features
+from src.btc_targets import (
+    INDICATOR_COLS,
+    generate_target_row,
+    load_model_pair,
+    prediction_frame,
+)
 from src.records import append_csv, load_state, save_state
-from src.strategy import VOTING_INDICATORS, RegimeStrategy, VotingStrategy
+from src.strategy import RegimeStrategy, VotingStrategy
 from src.tracker import CostModel, Portfolio
 
 STRATEGIES = {"regime": RegimeStrategy, "voting": VotingStrategy}
-# technical indicators (from build_features, data through t-1) passed to the strategy each bar
-INDICATOR_COLS = tuple(dict.fromkeys(("rsi_14", "close_over_sma_20", "close_over_sma_50",
-                                      "bb_pctb_20", "bb_width_20") + VOTING_INDICATORS))
 
 
 def cost_model_from(cfg) -> CostModel:
@@ -86,11 +87,9 @@ class DailyRunner:
 
         self.models = {}
         for a in self.assets:
-            up = lgb.Booster(model_file=str(cfg.ASSETS[a]["model_up"]))
-            down = lgb.Booster(model_file=str(cfg.ASSETS[a]["model_down"]))
-            if up.feature_name() != down.feature_name():
-                raise ValueError(f"{a}: up and down models use different feature columns")
-            self.models[a] = (up, down)
+            self.models[a] = load_model_pair(
+                cfg.ASSETS[a]["model_up"], cfg.ASSETS[a]["model_down"]
+            )
 
         costs = cost_model_from(cfg)
         Strategy = strategy_class(cfg)
@@ -135,19 +134,8 @@ class DailyRunner:
         return hist, today
 
     def _predict(self, asset, hist, bars_today):
-        up, down = self.models[asset]
-        cols = up.feature_name()
-        feats = build_features(hist[asset], asset, hist)
-        missing = [c for c in cols if c not in feats.columns]
-        if missing:
-            raise KeyError(f"{asset}: build_features() does not produce model columns {missing}")
-        X = feats.loc[bars_today.index, cols]
-        nan_rows = int(X.isna().any(axis=1).sum())
-        if nan_rows:
-            print(f"  warning: {asset}: {nan_rows} bars with NaN features (increase LOOKBACK_DAYS?)")
-        return (pd.Series(up.predict(X), index=X.index),
-                pd.Series(down.predict(X), index=X.index),
-                feats.loc[bars_today.index, list(INDICATOR_COLS)])
+        frame = prediction_frame(hist[asset], bars_today, asset, self.models[asset], hist)
+        return frame["p_up"], frame["p_down"], frame[list(INDICATOR_COLS)]
 
     def run_day(self, day) -> int:
         """Process every not-yet-processed bar of `day` (UTC). Returns bars processed."""
@@ -182,16 +170,13 @@ class DailyRunner:
         n_fills, n_trades, n_eq = len(self.pf._fills), len(self.pf._trades), len(self.pf._equity)
         decisions = []
         for ts in timeline:
-            targets, opens, closes, signals, votes = {}, {}, {}, {}, {}
+            targets, opens, closes, diagnostics = {}, {}, {}, {}
             for a in active:
                 row = data[a].loc[ts]
                 if np.isnan(row["open"]):
                     continue                      # no bar for this asset at ts
-                indicators = {k: float(row[k]) for k in INDICATOR_COLS}
-                st, p_up, p_down = self.strategies[a], float(row["p_up"]), float(row["p_down"])
-                if isinstance(st, VotingStrategy):        # log each rule's vote
-                    votes[a] = {f"vote_{r}": v for r, v in st.votes(p_up, p_down, indicators).items()}
-                signals[a], targets[a] = st.step(p_up, p_down, indicators, float(row["open"]), ts)
+                diagnostics[a] = generate_target_row(self.strategies[a], row, ts)
+                targets[a] = diagnostics[a]["execution_target_position"]
                 opens[a], closes[a] = float(row["open"]), float(row["close"])
             before = {a: self.pf.position(a) for a in targets}
             fills = execute_bar(self.pf, ts, targets, self.prev_targets, opens, closes,
@@ -207,8 +192,11 @@ class DailyRunner:
                                   "close": closes[a], "p_up": data[a].at[ts, "p_up"],
                                   "p_down": data[a].at[ts, "p_down"],
                                   **{k: data[a].at[ts, k] for k in INDICATOR_COLS},
-                                  **votes.get(a, {}), "signal": signals[a],
+                                  **{k: v for k, v in diagnostics[a].items()
+                                     if k.startswith("vote_")},
+                                  "signal": diagnostics[a]["entry_signal"],
                                   "target": targets[a], "action": action,
+                                  "signal_reason": diagnostics[a]["signal_reason"],
                                   "position_qty": after, "transaction_cost": cost.get(a, 0.0),
                                   "portfolio_equity": equity})
         for a in active:

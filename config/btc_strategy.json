@@ -81,10 +81,19 @@
   },
   "execution": {
     "timing": "features_through_previous_bar_target_and_execution_at_current_bar_open",
+    "export_target_column": "execution_target_position",
+    "additional_delay_after_export": false,
     "feature_shift_bars": 1,
     "initial_cash_usd": 100000.0,
     "strategy_weight": 1.0,
     "leverage": 1.0,
+    "shorting_assumptions": {
+      "exposure_type": "short_capable_synthetic_or_margin_exposure_not_spot_only",
+      "borrowing_cost_bps": 0.0,
+      "funding_cost_bps": 0.0,
+      "margin_and_liquidation_modelled": false,
+      "integration_decision": "team_confirmation_required_before_combined_portfolio"
+    },
     "commission_bps_per_order": 10.0,
     "slippage_bps_per_order": 0.0,
     "minimum_commission_usd": 0.0,
