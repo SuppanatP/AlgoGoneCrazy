@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sizing-config",
         type=Path,
-        default=Path("config/portfolio_sizing.json"),
+        default=Path("config/three_asset_portfolio.json"),
     )
     parser.add_argument(
         "--strategy-config",
@@ -68,16 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-missing-external",
         action="store_true",
         help=(
-            "Treat an absent external signal as zero; active assets may absorb "
-            "exposure up to the common concentration cap. Omit this flag for "
-            "the final complete run."
+            "Treat an absent external signal as zero and retain its sleeve as "
+            "cash. Omit this flag for the final complete run."
         ),
     )
     parser.add_argument("--slippage-bps", type=float, default=0.0)
     parser.add_argument(
         "--sizing-method",
         choices=sorted(SUPPORTED_WEIGHTING_METHODS),
-        help="Override the weighting method configured in portfolio_sizing.json.",
+        help="Override the weighting method configured in the sizing file.",
     )
     parser.add_argument(
         "--output-dir",
@@ -186,10 +185,10 @@ def main() -> None:
         ),
     )
     strategy_returns = None
-    if (
-        selected_sizing_method
-        == "capped_strategy_performance_adjusted_inverse_volatility"
-    ):
+    if selected_sizing_method in {
+        "capped_strategy_performance_adjusted_inverse_volatility",
+        "capped_strategy_return_inverse_volatility",
+    }:
         strategy_returns = daily_strategy_returns_after_costs(
             canonical,
             execution_signals,
@@ -277,7 +276,10 @@ def main() -> None:
         "signal_timing": strategy_config.get("signal_timing"),
         "risk_rebalance_frequency": policy.rebalance_frequency,
         "weighting_method": policy.method,
-        "maximum_asset_weight": configured_maximum_weight(sizing_config, assets[0]),
+        "maximum_asset_weights": {
+            asset: configured_maximum_weight(sizing_config, asset)
+            for asset in assets
+        },
         "target_weight_change_threshold": float(
             sizing_config.get("target_weight_change_threshold", 0.0)
         ),

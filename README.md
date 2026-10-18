@@ -63,16 +63,15 @@ Development-period canonical bars
       -> reliability filters and robustness ranking
       -> locally saved selected parameters
 
-Canonical adjusted closes
-      -> one daily close per local market session
-      -> trailing annualized volatility known before each rebalance date
-      -> inverse volatility multiplied by available-history confidence
-      -> allocate a 95% strategic budget subject to one common 75% cap
-      -> retain every inactive signal's allocation as cash
+Standalone SPY/STI/BTC strategy targets
+      -> daily after-cost strategy return histories before the run starts
+      -> inverse strategy-return volatility sleeves
+      -> cap STI at 10%, SPY/BTC at 75%, and reserve 5% cash
+      -> retain every inactive strategy sleeve as cash
 
-Selected SPY/STI strategies + external BTC signal interface
-      -> delay decisions to each asset's next eligible raw open
-      -> apply weekly risk budgets and point-in-time USD conversion
+Selected SPY/STI strategies + stateful BTC target export
+      -> delay SPY/STI to the next eligible raw open; execute BTC at its listed open
+      -> apply frozen risk sleeves and point-in-time USD conversion
       -> execute through one USD cash and position ledger
       -> decisions, fills, trades, equity, costs, and per-asset P&L
 ```
@@ -130,8 +129,9 @@ config/
   october_live_data_pipeline.json  Live extraction plus history/live consolidation
   strategy_optimization.json Search spaces, training folds, and constraints
   two_week_strategy_optimization.json Short-horizon frequencies and compact grids
-  portfolio_sizing.json      Frozen history-confidence sizing and quantity steps
-  selected_strategies.json   Frozen SPY/STI rules and external BTC interface
+  portfolio_sizing.json      Historical SPY/STI selection sizing configuration
+  three_asset_portfolio.json Final three-asset sleeves, caps, cash, and quantities
+  selected_strategies.json   Frozen SPY/STI rules and BTC target interface
   btc_strategy.json          Existing standalone BTC strategy reproducibility manifest
 test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
@@ -436,9 +436,10 @@ The ignored directory `results/two_week_strategy_optimization/` contains:
 - `joint_diagnostic_summary.csv`: known September shared-portfolio comparison
 - `optimization_manifest.json`: data, periods, costs, sizing, and grid snapshot
 
-The sizing comparison ranks methods for review but does not change the default
-automatically. The final default in `config/portfolio_sizing.json` is
-history-confidence inverse volatility with inactive allocations held as cash.
+The sizing comparison ranks methods for review but does not change the historical
+selection setup automatically. `config/portfolio_sizing.json` remains the
+history-confidence configuration used to reproduce the SPY/STI selection;
+`config/three_asset_portfolio.json` separately defines final integration sizing.
 
 There is no minimum trade-window eligibility condition. Completed candidates
 are ranked by median after-cost return, profitable-window rate,
@@ -448,32 +449,24 @@ strategy-selection rule.
 
 ### Portfolio sizing
 
-Portfolio sizing is separate from signal generation. Momentum, mean reversion,
-or another teammate's strategy supplies a standardized target signal: `1` for
-long and `0` for cash. The final sizing score is each asset's inverse
-volatility multiplied by `min(1, prior daily observations / 252)`. These scores
-share a 95% strategic budget subject to one common 75% maximum. If an asset's
-signal is inactive, its strategic allocation remains cash rather than being
-transferred to another asset. The configured 5% is therefore only the minimum
-cash reserve when every strategy is active; actual cash can be higher.
+Portfolio sizing is separate from signal generation. SPY momentum and STI mean
+reversion supply long-or-cash targets. BTC supplies its existing stateful target
+between `-1` and `1`, including full, partial, fallback, flat, and short values.
+Each target scales only that strategy's sleeve; a full BTC target no longer
+means using the entire three-asset portfolio.
 
-The tracked defaults use 60 daily return observations, permit a minimum of 40
-while STI history remains short, rebalance weekly, reserve at least 5% cash,
-apply a 5% annualized volatility floor, and apply the same 75% maximum to SPY,
-ES3.SI, and BTCUSDT. Existing position quantities are not resized merely
-because a weekly target weight changes; a new weight is applied on the next
-strategy entry. TLT is not part of the current portfolio. Every weight uses
-adjusted closing prices strictly before its rebalance date, so current or
-future prices cannot leak into the sizing decision.
+The combined portfolio reserves 5% strategic cash and caps STI at 10% because
+it is intentionally the smallest exposure. SPY and BTC may each use at most
+75%. The remaining allocation is determined by inverse volatility of each
+standalone strategy's daily after-cost returns, using 60 observations with a
+minimum of 40. This compares realised strategy risk rather than assuming equal
+dollars create equal risk. No Sharpe or return forecast enters the calculation.
 
-Alternative sizing designs were considered during development but their
-redundant executable configuration snapshots are not retained. The reproducible
-final rule is stored only in `config/portfolio_sizing.json`. A full year of
-prior observations receives confidence one; shorter histories are linearly
-shrunk. At the start of the evaluation period this
-produced strategic weights of approximately 63.6% SPY, 14.8% STI, and 16.6%
-BTC before signals were applied. It uses no return or Sharpe forecast and no
-asset-specific preference.
+Sleeve weights are calculated once at the simulation start from observations
+strictly before that timestamp and then frozen. For an October run, October
+performance therefore cannot influence the allocation. Inactive sleeves remain
+cash instead of being transferred to whichever strategy trades first. Whole
+shares are used for SPY and ES3.SI; BTC uses fractional units. TLT is excluded.
 
 The portfolio simulation starts with USD 500,000 in cash and no positions.
 There are no later external deposits or withdrawals. Sale proceeds, dividends,
@@ -510,6 +503,18 @@ Build weights for the three configured assets:
 ```bash
 python run_portfolio_weights.py \
   --fx-file data/fx/fx_rates_to_usd.csv
+```
+
+Build the final integration sleeves after generating the BTC target file:
+
+```bash
+python run_portfolio_weights.py \
+  --config-file config/three_asset_portfolio.json \
+  --input-file data/canonical/market_bars_30m_simulation_live_to_date.csv \
+  --start 2026-10-01 \
+  --end 2026-10-02 \
+  --fx-file data/fx/fx_rates_to_usd.csv \
+  --output-dir results/three_asset_portfolio_weights
 ```
 
 Build the equal-weight schedule instead of the configured inverse-volatility
@@ -574,21 +579,32 @@ into actual quantities in one USD ledger.
 
 The currently selected SPY and ES3.SI parameters are stored in
 `config/selected_strategies.json`; the optimiser never changes that file
-automatically. BTCUSDT is configured as an external signal source.
+automatically. BTCUSDT uses a reproducible target export from the tracked models
+and voting configuration.
 
 | Asset | Signal method | Decision interval | Frozen selection |
 |---|---|---:|---|
 | SPY | Momentum | 120 minutes | `spy_usd__momentum_0041` |
 | ES3.SI | Mean reversion | 120 minutes | `sti_es3_sgd__mean_reversion_0052` |
-| BTCUSDT | Teammate external signal | 30 minutes | Awaiting signal CSV |
+| BTCUSDT | LightGBM gate plus stateful voting | 30 minutes | `config/btc_strategy.json` |
 
-BTC's CSV must contain `bar_open_time_utc` and `target_position`, where the
-target is `1` for long or `0` for cash and is decided after that 30-minute bar
-closes. Timestamps must match canonical BTC 30-minute bar opens. Sparse changes
-are allowed and are carried forward until the next supplied decision. The
-simulator delays each decision to the next eligible BTC bar open. SPY and STI
-retain their latest 120-minute decisions between their own decision times, so
-all three assets can share one portfolio despite their mixed frequencies.
+Generate BTC targets from the same canonical snapshot used by the portfolio.
+Start early enough to supply the pre-period strategy-risk history:
+
+```bash
+python export_btc_targets.py \
+  --input-file data/canonical/market_bars_30m_simulation_live_to_date.csv \
+  --start 2026-06-01 \
+  --end 2026-10-20 \
+  --output records/btc_target_exports/btc_targets.csv
+```
+
+The generated file is ignored. Its signed fractional
+`execution_target_position` applies at the listed BTC bar open because all BTC
+features already end at the preceding bar; the portfolio simulator does not
+delay BTC again. SPY and STI decisions still execute at the next eligible open.
+BTC strategy state advances sequentially during export. The standalone
+`state.json` portfolio cash is not imported into the shared ledger.
 
 Run the September portfolio evaluation while the BTC signal file is unavailable:
 
@@ -600,14 +616,13 @@ python run_portfolio_simulation.py \
 ```
 
 In that temporary mode BTC receives no orders and its strategic allocation
-remains cash. SPY and STI keep their own history-confidence weights rather than
-absorbing BTC's allocation. For the complete run, save the teammate's signal file at
-`data/signals/btc_signals.csv` and omit `--allow-missing-external`; a missing BTC
-file then stops the run. The simulator uses one USD 500,000 ledger, historical
+remains cash. For a complete run, generate the BTC target file above and omit
+`--allow-missing-external`; a missing target file stops the run. The simulator
+uses one USD 500,000 ledger, historical
 SGD/USD rates, USDT/USD at 1:1, whole units for SPY/ES3.SI, fractional BTC,
 configured broker commissions, no separate FX transaction fee, and the next
-eligible raw open. It refreshes risk weights weekly, keeps inactive allocations
-as cash, and does not resize an existing position solely for a weight update.
+eligible raw open. It freezes sleeve weights at the run's start and keeps
+inactive allocations as cash.
 
 Use equal weighting for a direct portfolio replay comparison:
 
@@ -620,13 +635,14 @@ python run_portfolio_simulation.py \
   --output-dir results/portfolio_simulation_equal_weight
 ```
 
-Equal weighting is retained as a benchmark; history-confidence inverse
-volatility with cash retention is the configured final method. Once the BTC
-signal file and market data through 20 October are available, refresh the live
-pipeline and run the frozen official-period simulation once:
+Equal weighting remains a benchmark; inverse standalone strategy-return
+volatility with cash retention is the configured integration method. Once the
+BTC target file and market data through 20 October are available, run the
+official-period simulation:
 
 ```bash
 python run_portfolio_simulation.py \
+  --input-file data/canonical/market_bars_30m_simulation_live_to_date.csv \
   --start 2026-10-01 \
   --end 2026-10-21
 ```
