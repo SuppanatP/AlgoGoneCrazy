@@ -1,0 +1,53 @@
+{
+  "configuration_status": "three_asset_cash_retention_baseline",
+  "selection_note": "Baseline integration policy. Each strategy retains its own target intensity and every inactive or partially used sleeve remains cash.",
+  "method": "capped_strategy_return_inverse_volatility",
+  "lookback_observations": 60,
+  "minimum_observations": 40,
+  "target_gross_exposure": 0.95,
+  "volatility_floor": 0.05,
+  "rebalance_frequency": "initial_only",
+  "target_weight_change_threshold": 0.05,
+  "resize_existing_positions_on_rebalance": false,
+  "performance_measure": "standalone_after_cost_strategy_return_volatility_only",
+  "signal_policy": "asset_specific_targets_btc_may_short",
+  "inactive_allocation": "hold_as_cash",
+  "base_currency": "USD",
+  "initial_cash_base": 500000.0,
+  "starting_positions": "none",
+  "external_cash_flow_policy": "no_external_injections_or_withdrawals",
+  "volatility_currency_basis": "base_currency_strategy_returns_after_costs",
+  "strategy_performance_reference_notional_base": 100000.0,
+  "static_rates_to_base": {
+    "USD": 1.0,
+    "USDT": 1.0
+  },
+  "fx_ingestion": {
+    "provider": "fred_download",
+    "series_id": "DEXSIUS",
+    "input_file": "data/fx/raw/DEXSIUS.csv",
+    "availability_lag_days": 1,
+    "output_file": "data/fx/fx_rates_to_usd.csv",
+    "summary_file": "data/fx/fx_ingestion_summary.json"
+  },
+  "assets": {
+    "spy_usd": {
+      "quote_currency": "USD",
+      "annualization_periods": 252,
+      "quantity_step": 1.0,
+      "maximum_weight": 0.75
+    },
+    "sti_es3_sgd": {
+      "quote_currency": "SGD",
+      "annualization_periods": 252,
+      "quantity_step": 1.0,
+      "maximum_weight": 0.10
+    },
+    "btc_usdt": {
+      "quote_currency": "USDT",
+      "annualization_periods": 365,
+      "quantity_step": 0.000001,
+      "maximum_weight": 0.75
+    }
+  }
+}

@@ -462,9 +462,21 @@ dollars create equal risk. No Sharpe or return forecast enters the calculation.
 
 Sleeve weights are calculated once at the simulation start from observations
 strictly before that timestamp and then frozen. Holdout-period performance
-therefore cannot influence the allocation. Inactive sleeves remain
-cash instead of being transferred to whichever strategy trades first. Whole
-shares are used for SPY and ES3.SI; BTC uses fractional units.
+therefore cannot influence the allocation. The integration layer applies a
+bounded active-capital rule: with fewer than two active strategies, unused
+capital remains cash; with at least two, signed targets may be scaled while
+preserving their direction and relative intensity. No target may exceed twice
+its raw sleeve target, the asset cap, or the portfolio's 95% gross limit. STI
+therefore remains capped at 10%, and a small BTC fallback cannot become a full
+portfolio allocation. Target changes smaller than five percentage points are
+ignored to limit resizing costs. Whole shares are used for SPY and ES3.SI; BTC
+uses fractional units.
+
+`config/three_asset_portfolio_cash_baseline.json` preserves the earlier
+cash-retention policy for an apples-to-apples pre-holdout comparison. It does
+not resize an existing position when another strategy changes. The default
+`config/three_asset_portfolio.json` enables bounded active-capital scaling and
+allows thresholded resizing so that the new portfolio targets can take effect.
 
 The portfolio simulation starts with USD 500,000 in cash and no positions.
 There are no later external deposits or withdrawals. Sale proceeds, dividends,
@@ -594,23 +606,37 @@ delay BTC again. SPY and STI decisions still execute at the next eligible open.
 BTC strategy state advances sequentially during export. The standalone
 `state.json` portfolio cash is not imported into the shared ledger.
 
-Run the September portfolio evaluation while the BTC signal file is unavailable:
+Compare the old cash-retention rule and bounded active-capital rule over the
+same pre-holdout period after generating BTC targets:
 
 ```bash
 python run_portfolio_simulation.py \
+  --input-file data/canonical/market_bars_30m_training_validation.csv \
   --start 2026-09-01 \
-  --end 2026-09-30T23:59:59Z \
-  --allow-missing-external
+  --end 2026-10-01 \
+  --sizing-config config/three_asset_portfolio_cash_baseline.json \
+  --output-dir results/integration_policy_pre_holdout_cash_baseline
+
+python run_portfolio_simulation.py \
+  --input-file data/canonical/market_bars_30m_training_validation.csv \
+  --start 2026-09-01 \
+  --end 2026-10-01 \
+  --sizing-config config/three_asset_portfolio.json \
+  --output-dir results/integration_policy_pre_holdout_bounded_scaling
 ```
 
-In that temporary mode BTC receives no orders and its strategic allocation
-remains cash. For a complete run, generate the BTC target file above and omit
-`--allow-missing-external`; a missing target file stops the run. The simulator
-uses one USD 500,000 ledger, historical
+Both output directories are ignored. Compare `performance_summary.csv`,
+`asset_summary.csv`, and the raw-versus-scaled target columns in
+`decisions.csv`. The cash baseline must reproduce the earlier integration
+result before interpreting the new policy. A missing BTC target file stops a
+complete run; `--allow-missing-external` is only a temporary connectivity mode
+and must not be used for policy selection. The simulator uses one USD 500,000
+ledger, historical
 SGD/USD rates, USDT/USD at 1:1, whole units for SPY/ES3.SI, fractional BTC,
 configured broker commissions, no separate FX transaction fee, and the next
-eligible raw open. It freezes sleeve weights at the run's start and keeps
-inactive allocations as cash.
+eligible raw open. It freezes sleeve weights at the run's start. Under the
+default configuration, bounded scaling can deploy some otherwise idle cash
+only when at least two strategies are active.
 
 Use equal weighting for a direct portfolio replay comparison:
 
