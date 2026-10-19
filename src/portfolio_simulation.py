@@ -105,6 +105,128 @@ class BaseCurrencyProjectCostModel:
         return execution_price, float(fee_base), float(slippage_cost)
 
 
+def _portfolio_target_weights(
+    base_risk_weights: Mapping[str, float],
+    latest_signal: Mapping[str, float],
+    maximum_weights: Mapping[str, float],
+    target_gross_exposure: float,
+    inactive_allocation: str,
+    *,
+    minimum_active_strategies_for_scaling: int,
+    maximum_active_scaling_multiplier: float,
+    scaling_eligibility_minimum_absolute_target: Mapping[str, float],
+) -> tuple[dict[str, float], dict[str, float], int, int]:
+    """Map sleeve-relative strategy targets into signed portfolio weights.
+
+    The bounded policy can deploy part of the otherwise idle cash only when
+    multiple independent strategies are active. It never changes a target's
+    sign and never scales its absolute size by more than the configured
+    multiplier or beyond the asset cap.
+    """
+    assets = list(base_risk_weights)
+    raw_targets = {
+        asset: float(base_risk_weights[asset]) * float(latest_signal[asset])
+        for asset in assets
+    }
+    active_assets = [
+        asset for asset in assets if abs(raw_targets[asset]) > 1e-12
+    ]
+    scaling_eligible_assets = [
+        asset
+        for asset in active_assets
+        if abs(float(latest_signal[asset]))
+        >= float(scaling_eligibility_minimum_absolute_target.get(asset, 0.0))
+    ]
+
+    if inactive_allocation == "hold_as_cash":
+        return (
+            raw_targets.copy(),
+            raw_targets,
+            len(active_assets),
+            len(scaling_eligible_assets),
+        )
+
+    if inactive_allocation == "redistribute_to_active_assets_subject_to_common_cap":
+        positive_scores = pd.Series(
+            {
+                asset: raw_targets[asset]
+                for asset in assets
+                if raw_targets[asset] > 0
+            },
+            dtype="float64",
+        )
+        if positive_scores.empty:
+            return (
+                {asset: 0.0 for asset in assets},
+                raw_targets,
+                len(active_assets),
+                len(scaling_eligible_assets),
+            )
+        allocated = allocate_capped_scores(
+            positive_scores,
+            target_gross_exposure,
+            {asset: maximum_weights[asset] for asset in positive_scores.index},
+        )
+        return (
+            {asset: float(allocated.get(asset, 0.0)) for asset in assets},
+            raw_targets,
+            len(active_assets),
+            len(scaling_eligible_assets),
+        )
+
+    if (
+        len(scaling_eligible_assets)
+        < minimum_active_strategies_for_scaling
+    ):
+        return (
+            raw_targets.copy(),
+            raw_targets,
+            len(active_assets),
+            len(scaling_eligible_assets),
+        )
+
+    active_scores = pd.Series(
+        {asset: abs(raw_targets[asset]) for asset in active_assets},
+        dtype="float64",
+    )
+    bounded_caps = {
+        asset: min(
+            float(maximum_weights[asset]),
+            abs(raw_targets[asset]) * maximum_active_scaling_multiplier,
+        )
+        for asset in active_assets
+    }
+    deployable_gross = min(
+        float(target_gross_exposure),
+        float(sum(bounded_caps.values())),
+    )
+    current_gross = float(active_scores.sum())
+    if deployable_gross <= current_gross + 1e-12:
+        return (
+            raw_targets.copy(),
+            raw_targets,
+            len(active_assets),
+            len(scaling_eligible_assets),
+        )
+
+    allocated_magnitudes = allocate_capped_scores(
+        active_scores,
+        deployable_gross,
+        bounded_caps,
+    )
+    targets = {asset: 0.0 for asset in assets}
+    for asset in active_assets:
+        targets[asset] = float(
+            np.copysign(allocated_magnitudes[asset], raw_targets[asset])
+        )
+    return (
+        targets,
+        raw_targets,
+        len(active_assets),
+        len(scaling_eligible_assets),
+    )
+
+
 def _rule_based_signal(
     bars: pd.DataFrame,
     strategy: str,
@@ -730,6 +852,7 @@ def simulate_portfolio(
         )
     )
     supported_inactive_allocation = {
+        "bounded_active_capital_scaling",
         "redistribute_to_active_assets_subject_to_common_cap",
         "hold_as_cash",
     }
@@ -737,6 +860,42 @@ def simulate_portfolio(
         raise ValueError(
             "inactive_allocation must be one of "
             f"{sorted(supported_inactive_allocation)}"
+        )
+    minimum_active_strategies_for_scaling = int(
+        sizing_config.get("minimum_active_strategies_for_scaling", 2)
+    )
+    if minimum_active_strategies_for_scaling < 1:
+        raise ValueError("minimum_active_strategies_for_scaling must be positive")
+    maximum_active_scaling_multiplier = float(
+        sizing_config.get("maximum_active_scaling_multiplier", 2.0)
+    )
+    if maximum_active_scaling_multiplier < 1:
+        raise ValueError("maximum_active_scaling_multiplier must be at least 1")
+    configured_scaling_thresholds = sizing_config.get(
+        "scaling_eligibility_minimum_absolute_target", {}
+    )
+    if not isinstance(configured_scaling_thresholds, Mapping):
+        raise ValueError(
+            "scaling_eligibility_minimum_absolute_target must be an object"
+        )
+    unknown_scaling_threshold_assets = (
+        set(configured_scaling_thresholds) - set(assets)
+    )
+    if unknown_scaling_threshold_assets:
+        raise ValueError(
+            "Unknown scaling eligibility assets: "
+            f"{sorted(unknown_scaling_threshold_assets)}"
+        )
+    scaling_eligibility_minimum_absolute_target = {
+        asset: float(configured_scaling_thresholds.get(asset, 0.0))
+        for asset in assets
+    }
+    if any(
+        not 0.0 <= threshold <= 1.0
+        for threshold in scaling_eligibility_minimum_absolute_target.values()
+    ):
+        raise ValueError(
+            "Scaling eligibility target thresholds must be between 0 and 1"
         )
     target_weight_change_threshold = float(
         sizing_config.get("target_weight_change_threshold", 0.0)
@@ -787,42 +946,47 @@ def simulate_portfolio(
             asset: float(risk_weights.at[rebalance_time, asset])
             for asset in assets
         }
-        if inactive_allocation == "hold_as_cash":
-            portfolio_target_weights = {
-                asset: base_risk_weights[asset] * latest_signal[asset]
-                for asset in assets
-            }
-        else:
-            active_scores = pd.Series(
-                {
-                    asset: base_risk_weights[asset] * latest_signal[asset]
-                    for asset in assets
-                    if latest_signal[asset] > 0
-                },
-                dtype="float64",
-            )
-            if active_scores.empty:
-                portfolio_target_weights = {asset: 0.0 for asset in assets}
-            else:
-                active_target_weights = allocate_capped_scores(
-                    active_scores,
-                    target_gross_exposure,
-                    {
-                        asset: maximum_weights[asset]
-                        for asset in active_scores.index
-                    },
-                )
-                portfolio_target_weights = {
-                    asset: float(active_target_weights.get(asset, 0.0))
-                    for asset in assets
-                }
+        (
+            portfolio_target_weights,
+            raw_portfolio_target_weights,
+            active_strategy_count,
+            scaling_eligible_strategy_count,
+        ) = _portfolio_target_weights(
+            base_risk_weights,
+            latest_signal,
+            maximum_weights,
+            target_gross_exposure,
+            inactive_allocation,
+            minimum_active_strategies_for_scaling=(
+                minimum_active_strategies_for_scaling
+            ),
+            maximum_active_scaling_multiplier=(
+                maximum_active_scaling_multiplier
+            ),
+            scaling_eligibility_minimum_absolute_target=(
+                scaling_eligibility_minimum_absolute_target
+            ),
+        )
         equity_at_open = float(portfolio.equity(opens))
         planned: list[dict[str, Any]] = []
 
         for asset in present:
             signal = latest_signal[asset]
             risk_weight = base_risk_weights[asset]
+            raw_target_weight = raw_portfolio_target_weights[asset]
             target_weight = portfolio_target_weights[asset]
+            scaling_eligibility_threshold = (
+                scaling_eligibility_minimum_absolute_target[asset]
+            )
+            scaling_eligible = (
+                abs(signal) >= scaling_eligibility_threshold
+                and abs(raw_target_weight) > 1e-12
+            )
+            target_scaling_multiplier = (
+                abs(target_weight / raw_target_weight)
+                if abs(raw_target_weight) > 1e-12
+                else 0.0
+            )
             rebalance_changed = last_rebalance[asset] != rebalance_time
             signal_changed = last_signal[asset] != signal
             target_changed = (
@@ -852,7 +1016,18 @@ def simulate_portfolio(
                     "instrument_id": asset,
                     "signal": signal,
                     "risk_weight": risk_weight,
+                    "raw_target_weight": raw_target_weight,
                     "target_weight": target_weight,
+                    "target_scaling_multiplier": target_scaling_multiplier,
+                    "active_strategy_count": active_strategy_count,
+                    "scaling_eligible": scaling_eligible,
+                    "scaling_eligibility_threshold": (
+                        scaling_eligibility_threshold
+                    ),
+                    "scaling_eligible_strategy_count": (
+                        scaling_eligible_strategy_count
+                    ),
+                    "capital_scaling_policy": inactive_allocation,
                     "rebalance_date_utc": rebalance_time,
                     "rebalance_changed": rebalance_changed,
                     "signal_changed": signal_changed,
@@ -947,6 +1122,8 @@ def simulate_portfolio(
     metrics["Net Profit"] = float(result.equity.iloc[-1] - initial_cash)
     metrics["Minimum Cash Weight"] = float((curve["cash"] / curve["equity"]).min())
     metrics["Average Cash Weight"] = float((curve["cash"] / curve["equity"]).mean())
+    metrics["Average Gross Exposure"] = float(curve["gross_exposure"].mean())
+    metrics["Maximum Gross Exposure"] = float(curve["gross_exposure"].max())
 
     signal_output = signal_output.loc[
         signal_output["bar_open_time_utc"].ge(effective_start)

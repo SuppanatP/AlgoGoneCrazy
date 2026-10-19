@@ -287,6 +287,18 @@ def main() -> None:
             sizing_config.get("resize_existing_positions_on_rebalance", True)
         ),
         "strategy_inactive_allocation": sizing_config.get("inactive_allocation"),
+        "minimum_active_strategies_for_scaling": (
+            int(sizing_config.get("minimum_active_strategies_for_scaling", 2))
+            if sizing_config.get("inactive_allocation")
+            == "bounded_active_capital_scaling"
+            else None
+        ),
+        "maximum_active_scaling_multiplier": (
+            float(sizing_config.get("maximum_active_scaling_multiplier", 2.0))
+            if sizing_config.get("inactive_allocation")
+            == "bounded_active_capital_scaling"
+            else None
+        ),
         "strategy_performance_measure": sizing_config.get("performance_measure"),
         "strategy_performance_reference_notional_base": float(
             sizing_config.get(
