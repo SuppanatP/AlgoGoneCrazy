@@ -1,6 +1,6 @@
 {
-  "configuration_status": "three_asset_bounded_active_capital_scaling",
-  "selection_note": "Each strategy retains its own signed target intensity. When at least two independent strategies are active, otherwise idle capital is scaled across those active targets subject to a two-times limit, the ninety-five percent gross limit, and each asset cap. The policy uses no holdout returns.",
+  "configuration_status": "three_asset_materially_active_capital_scaling",
+  "selection_note": "Each strategy retains its own signed target intensity. When at least two materially active independent strategies are present, otherwise idle capital is scaled across active targets subject to a two-times limit, the ninety-five percent gross limit, and each asset cap. Small BTC fallback targets continue trading but do not unlock portfolio-wide scaling. Materiality thresholds follow the strategies' native target states rather than fitted return thresholds.",
   "method": "capped_strategy_return_inverse_volatility",
   "lookback_observations": 60,
   "minimum_observations": 40,
@@ -14,6 +14,11 @@
   "inactive_allocation": "bounded_active_capital_scaling",
   "minimum_active_strategies_for_scaling": 2,
   "maximum_active_scaling_multiplier": 2.0,
+  "scaling_eligibility_minimum_absolute_target": {
+    "spy_usd": 1.0,
+    "sti_es3_sgd": 1.0,
+    "btc_usdt": 0.5
+  },
   "base_currency": "USD",
   "initial_cash_base": 500000.0,
   "starting_positions": "none",

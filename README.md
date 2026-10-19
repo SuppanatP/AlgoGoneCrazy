@@ -463,14 +463,17 @@ dollars create equal risk. No Sharpe or return forecast enters the calculation.
 Sleeve weights are calculated once at the simulation start from observations
 strictly before that timestamp and then frozen. Holdout-period performance
 therefore cannot influence the allocation. The integration layer applies a
-bounded active-capital rule: with fewer than two active strategies, unused
-capital remains cash; with at least two, signed targets may be scaled while
-preserving their direction and relative intensity. No target may exceed twice
-its raw sleeve target, the asset cap, or the portfolio's 95% gross limit. STI
-therefore remains capped at 10%, and a small BTC fallback cannot become a full
-portfolio allocation. Target changes smaller than five percentage points are
-ignored to limit resizing costs. Whole shares are used for SPY and ES3.SI; BTC
-uses fractional units.
+bounded active-capital rule. A strategy qualifies for the scaling gate only
+when its absolute target reaches the configured materiality threshold: 1.0 for
+SPY and STI and 0.5 for BTC. Small BTC fallback targets of 0.10 or 0.05 still
+trade normally but do not unlock portfolio-wide expansion. With fewer than two
+qualifying strategies, unused capital remains cash; with at least two, all
+nonzero signed targets may be scaled while preserving their direction and
+relative intensity. No target may exceed twice its raw sleeve target, the asset
+cap, or the portfolio's 95% gross limit. STI therefore remains capped at 10%.
+Target changes smaller than five percentage points are ignored to limit
+resizing costs. Whole shares are used for SPY and ES3.SI; BTC uses fractional
+units.
 
 `config/three_asset_portfolio_cash_baseline.json` preserves the earlier
 cash-retention policy for an apples-to-apples pre-holdout comparison. It does
@@ -622,7 +625,7 @@ python run_portfolio_simulation.py \
   --start 2026-09-01 \
   --end 2026-10-01 \
   --sizing-config config/three_asset_portfolio.json \
-  --output-dir results/integration_policy_pre_holdout_bounded_scaling
+  --output-dir results/material_active_scaling_pre_holdout
 ```
 
 Both output directories are ignored. Compare `performance_summary.csv`,
@@ -636,7 +639,9 @@ SGD/USD rates, USDT/USD at 1:1, whole units for SPY/ES3.SI, fractional BTC,
 configured broker commissions, no separate FX transaction fee, and the next
 eligible raw open. It freezes sleeve weights at the run's start. Under the
 default configuration, bounded scaling can deploy some otherwise idle cash
-only when at least two strategies are active.
+only when at least two strategies are materially active. The generated
+`decisions.csv` records both the number of nonzero targets and the number that
+qualify for the scaling gate so the policy remains auditable.
 
 Use equal weighting for a direct portfolio replay comparison:
 

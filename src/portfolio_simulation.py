@@ -114,7 +114,8 @@ def _portfolio_target_weights(
     *,
     minimum_active_strategies_for_scaling: int,
     maximum_active_scaling_multiplier: float,
-) -> tuple[dict[str, float], dict[str, float], int]:
+    scaling_eligibility_minimum_absolute_target: Mapping[str, float],
+) -> tuple[dict[str, float], dict[str, float], int, int]:
     """Map sleeve-relative strategy targets into signed portfolio weights.
 
     The bounded policy can deploy part of the otherwise idle cash only when
@@ -130,9 +131,20 @@ def _portfolio_target_weights(
     active_assets = [
         asset for asset in assets if abs(raw_targets[asset]) > 1e-12
     ]
+    scaling_eligible_assets = [
+        asset
+        for asset in active_assets
+        if abs(float(latest_signal[asset]))
+        >= float(scaling_eligibility_minimum_absolute_target.get(asset, 0.0))
+    ]
 
     if inactive_allocation == "hold_as_cash":
-        return raw_targets.copy(), raw_targets, len(active_assets)
+        return (
+            raw_targets.copy(),
+            raw_targets,
+            len(active_assets),
+            len(scaling_eligible_assets),
+        )
 
     if inactive_allocation == "redistribute_to_active_assets_subject_to_common_cap":
         positive_scores = pd.Series(
@@ -144,7 +156,12 @@ def _portfolio_target_weights(
             dtype="float64",
         )
         if positive_scores.empty:
-            return {asset: 0.0 for asset in assets}, raw_targets, len(active_assets)
+            return (
+                {asset: 0.0 for asset in assets},
+                raw_targets,
+                len(active_assets),
+                len(scaling_eligible_assets),
+            )
         allocated = allocate_capped_scores(
             positive_scores,
             target_gross_exposure,
@@ -154,10 +171,19 @@ def _portfolio_target_weights(
             {asset: float(allocated.get(asset, 0.0)) for asset in assets},
             raw_targets,
             len(active_assets),
+            len(scaling_eligible_assets),
         )
 
-    if len(active_assets) < minimum_active_strategies_for_scaling:
-        return raw_targets.copy(), raw_targets, len(active_assets)
+    if (
+        len(scaling_eligible_assets)
+        < minimum_active_strategies_for_scaling
+    ):
+        return (
+            raw_targets.copy(),
+            raw_targets,
+            len(active_assets),
+            len(scaling_eligible_assets),
+        )
 
     active_scores = pd.Series(
         {asset: abs(raw_targets[asset]) for asset in active_assets},
@@ -176,7 +202,12 @@ def _portfolio_target_weights(
     )
     current_gross = float(active_scores.sum())
     if deployable_gross <= current_gross + 1e-12:
-        return raw_targets.copy(), raw_targets, len(active_assets)
+        return (
+            raw_targets.copy(),
+            raw_targets,
+            len(active_assets),
+            len(scaling_eligible_assets),
+        )
 
     allocated_magnitudes = allocate_capped_scores(
         active_scores,
@@ -188,7 +219,12 @@ def _portfolio_target_weights(
         targets[asset] = float(
             np.copysign(allocated_magnitudes[asset], raw_targets[asset])
         )
-    return targets, raw_targets, len(active_assets)
+    return (
+        targets,
+        raw_targets,
+        len(active_assets),
+        len(scaling_eligible_assets),
+    )
 
 
 def _rule_based_signal(
@@ -835,6 +871,32 @@ def simulate_portfolio(
     )
     if maximum_active_scaling_multiplier < 1:
         raise ValueError("maximum_active_scaling_multiplier must be at least 1")
+    configured_scaling_thresholds = sizing_config.get(
+        "scaling_eligibility_minimum_absolute_target", {}
+    )
+    if not isinstance(configured_scaling_thresholds, Mapping):
+        raise ValueError(
+            "scaling_eligibility_minimum_absolute_target must be an object"
+        )
+    unknown_scaling_threshold_assets = (
+        set(configured_scaling_thresholds) - set(assets)
+    )
+    if unknown_scaling_threshold_assets:
+        raise ValueError(
+            "Unknown scaling eligibility assets: "
+            f"{sorted(unknown_scaling_threshold_assets)}"
+        )
+    scaling_eligibility_minimum_absolute_target = {
+        asset: float(configured_scaling_thresholds.get(asset, 0.0))
+        for asset in assets
+    }
+    if any(
+        not 0.0 <= threshold <= 1.0
+        for threshold in scaling_eligibility_minimum_absolute_target.values()
+    ):
+        raise ValueError(
+            "Scaling eligibility target thresholds must be between 0 and 1"
+        )
     target_weight_change_threshold = float(
         sizing_config.get("target_weight_change_threshold", 0.0)
     )
@@ -888,6 +950,7 @@ def simulate_portfolio(
             portfolio_target_weights,
             raw_portfolio_target_weights,
             active_strategy_count,
+            scaling_eligible_strategy_count,
         ) = _portfolio_target_weights(
             base_risk_weights,
             latest_signal,
@@ -900,6 +963,9 @@ def simulate_portfolio(
             maximum_active_scaling_multiplier=(
                 maximum_active_scaling_multiplier
             ),
+            scaling_eligibility_minimum_absolute_target=(
+                scaling_eligibility_minimum_absolute_target
+            ),
         )
         equity_at_open = float(portfolio.equity(opens))
         planned: list[dict[str, Any]] = []
@@ -909,6 +975,13 @@ def simulate_portfolio(
             risk_weight = base_risk_weights[asset]
             raw_target_weight = raw_portfolio_target_weights[asset]
             target_weight = portfolio_target_weights[asset]
+            scaling_eligibility_threshold = (
+                scaling_eligibility_minimum_absolute_target[asset]
+            )
+            scaling_eligible = (
+                abs(signal) >= scaling_eligibility_threshold
+                and abs(raw_target_weight) > 1e-12
+            )
             target_scaling_multiplier = (
                 abs(target_weight / raw_target_weight)
                 if abs(raw_target_weight) > 1e-12
@@ -947,6 +1020,13 @@ def simulate_portfolio(
                     "target_weight": target_weight,
                     "target_scaling_multiplier": target_scaling_multiplier,
                     "active_strategy_count": active_strategy_count,
+                    "scaling_eligible": scaling_eligible,
+                    "scaling_eligibility_threshold": (
+                        scaling_eligibility_threshold
+                    ),
+                    "scaling_eligible_strategy_count": (
+                        scaling_eligible_strategy_count
+                    ),
                     "capital_scaling_policy": inactive_allocation,
                     "rebalance_date_utc": rebalance_time,
                     "rebalance_changed": rebalance_changed,
