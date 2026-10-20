@@ -86,6 +86,7 @@ The configuration files have distinct roles. They are not interchangeable:
 |---|---|
 | `config/selected_strategies.json` | Frozen SPY/STI rules and the BTC target-file interface |
 | `config/btc_strategy.json` | Standalone BTC models, voting, state, timing, shorting, and cost assumptions |
+| `config/reproduction_manifest.json` | Final selection command, input fingerprints, verified environment, and expected SPY/STI winners |
 | `config/sti_mean_reversion_expanded_optimization.json` | Exact SPY/STI search grids, training windows, validation windows, and cutoff |
 | `config/strategy_search_baseline.json` | Neutral comparator supplied to the grid search; not a selected result |
 | `config/portfolio_sizing.json` | Historical history-confidence sizing used only to reproduce SPY/STI pair selection |
@@ -173,6 +174,7 @@ src/features.py          Lagged BTC features shared by training and standalone r
 src/strategy.py          Stateful BTC ML/regime/voting strategies
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
+  reproduction_manifest.json Final selection recipe and input fingerprints
   sti_mean_reversion_expanded_optimization.json Exact SPY/STI grids and periods
   strategy_search_baseline.json Neutral grid-search input comparator
   portfolio_sizing.json      Historical SPY/STI selection sizing configuration
@@ -347,6 +349,12 @@ the ignored output directory and never edits `config/selected_strategies.json`.
 The expected winner is SPY candidate `spy_usd__momentum_0041` paired with STI
 candidate `sti_es3_sgd__mean_reversion_0052`. Their complete reviewed parameter
 values are frozen in `config/selected_strategies.json`.
+
+`config/reproduction_manifest.json` is the tracked recipe for this run. It
+records the same command, the SHA-256 fingerprints of the separately supplied
+market and FX data, all authoritative input configurations, the verified Python
+environment, and the expected winners. A fingerprint mismatch means the input
+snapshot or configuration is different and the result need not reproduce.
 
 Important generated outputs are:
 
