@@ -49,7 +49,7 @@
     },
     "neutral_search_baseline": {
       "path": "config/strategy_search_baseline.json",
-      "sha256": "dbcb755d50b160751a4f3eb42107eb369a085cde62dec4caf2125b8a5a519fdc"
+      "sha256": "8bffd1d6819a81228026fb16cc24e3a3166a62e72b5083c3b76a50565d9e76be"
     },
     "selection_time_sizing": {
       "path": "config/portfolio_sizing.json",

@@ -19,6 +19,11 @@ __pycache__/
 /results/
 /records/
 
-# Locally trained model artifacts and generated reports.
-/models/
+# Ignore newly trained model artifacts, but retain the two selected BTC models
+# required by config/btc_strategy.json.
+/models/*
+!/models/btc_up_202607_n100.txt
+!/models/btc_down_202607_n100.txt
+
+# Generated reports.
 /docs/
