@@ -773,6 +773,9 @@ def simulate_portfolio(
     end: pd.Timestamp,
     *,
     slippage_bps: float = 0.0,
+    risk_free_annual_rates: pd.Series | None = None,
+    risk_free_source: str | None = None,
+    risk_metric_periods_per_year: int = 365,
 ) -> PortfolioSimulationArtifacts:
     """Replay asset targets and configured sleeves through one USD cash ledger."""
     configured_assets = sizing_config["assets"]
@@ -1115,7 +1118,16 @@ def simulate_portfolio(
         result.trades,
         metric_positions,
         result.fills,
-        periods_per_year=48 * 365,
+        periods_per_year=risk_metric_periods_per_year,
+        risk_free_rate=(
+            risk_free_annual_rates
+            if risk_free_annual_rates is not None
+            else 0.0
+        ),
+        metric_frequency="daily",
+        risk_free_source=risk_free_source,
+        drop_incomplete_final_day=True,
+        annualize_by_elapsed_time=True,
     )
     metrics["Initial Equity"] = initial_cash
     metrics["Final Equity"] = float(result.equity.iloc[-1])

@@ -1,0 +1,19 @@
+{
+  "benchmark": "U.S. Treasury 3-month constant-maturity yield",
+  "source_name": "U.S. Department of the Treasury — Daily Treasury Par Yield Curve Rates",
+  "source_url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve",
+  "download_url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv",
+  "input_file": "data/risk_free/raw/us_treasury_yield_curve_2026.csv",
+  "date_column": "Date",
+  "yield_column": "3 Mo",
+  "yield_units": "percent_per_annum",
+  "availability_lag_days": 1,
+  "availability_policy": "Each published business-day yield becomes usable on the following UTC calendar date; weekends and holidays use the latest previously available observation.",
+  "cash_interest_policy": "Cash does not accrue interest in the simulation; the Treasury rate is used only as the Sharpe and Sortino opportunity-cost benchmark.",
+  "portfolio_return_frequency": "daily",
+  "daily_boundary_timezone": "UTC",
+  "partial_final_day_policy": "exclude_from_volatility_sharpe_sortino",
+  "annualization_days": 365,
+  "annual_return_method": "elapsed_calendar_time_cagr",
+  "drawdown_frequency": "intraday_equity_curve"
+}

@@ -1,6 +1,8 @@
 """Performance and transaction-cost metrics for the report table.
 
-Crypto trades 24/7, so annualisation uses 365 days: 48 x 365 = 17,520 thirty-minute bars.
+Portfolio execution remains intraday.  Report-level risk metrics can instead
+use daily portfolio returns so that intraday serial correlation is not silently
+treated as independence during annualisation.
 """
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 PERIODS_PER_YEAR_30M = 48 * 365
+CALENDAR_DAYS_PER_YEAR = 365
 
 
 def drawdown_series(equity: pd.Series) -> pd.Series:
@@ -43,10 +46,138 @@ def drawdown_episodes(equity: pd.Series, min_depth: float = 0.0) -> pd.DataFrame
     return eps[eps["depth"] <= -min_depth].reset_index(drop=True)
 
 
-def _annual_return(equity: pd.Series, periods_per_year: int) -> float:
-    n_years = (len(equity) - 1) / periods_per_year
+def _elapsed_years(equity: pd.Series, periods_per_year: int) -> float:
+    """Elapsed years, preferring timestamps over an observation count.
+
+    Equity rows are marked with the opening timestamp of the bar whose close
+    was used for valuation.  The typical bar length is therefore added to the
+    final timestamp when a regular DatetimeIndex is available.
+    """
+    if isinstance(equity.index, pd.DatetimeIndex) and len(equity) > 1:
+        index = equity.index.sort_values()
+        positive_differences = index.to_series().diff().dropna()
+        positive_differences = positive_differences.loc[
+            positive_differences.gt(pd.Timedelta(0))
+        ]
+        typical_interval = (
+            positive_differences.median()
+            if not positive_differences.empty
+            else pd.Timedelta(0)
+        )
+        elapsed = index[-1] + typical_interval - index[0]
+        elapsed_days = elapsed.total_seconds() / 86_400.0
+        if elapsed_days > 0:
+            return elapsed_days / CALENDAR_DAYS_PER_YEAR
+    return (len(equity) - 1) / periods_per_year
+
+
+def _annual_return(
+    equity: pd.Series,
+    periods_per_year: int,
+    *,
+    use_elapsed_time: bool = False,
+) -> float:
+    n_years = (
+        _elapsed_years(equity, periods_per_year)
+        if use_elapsed_time
+        else (len(equity) - 1) / periods_per_year
+    )
     total = equity.iloc[-1] / equity.iloc[0] - 1
     return (1 + total) ** (1 / n_years) - 1 if n_years > 0 and total > -1 else np.nan
+
+
+def _typical_interval(index: pd.DatetimeIndex) -> pd.Timedelta:
+    differences = index.to_series().diff().dropna()
+    differences = differences.loc[differences.gt(pd.Timedelta(0))]
+    return differences.median() if not differences.empty else pd.Timedelta(0)
+
+
+def daily_portfolio_returns(
+    equity: pd.Series,
+    *,
+    drop_incomplete_final_day: bool = True,
+) -> pd.Series:
+    """Return complete UTC-day portfolio returns from an intraday equity curve.
+
+    The first value is the pre-period capital supplied by the caller.  Every
+    later value contains intraday realised/unrealised P&L and transaction costs.
+    The final partial UTC day is excluded because treating a few hours as a full
+    day would bias annualised volatility and Sharpe.
+    """
+    if not isinstance(equity.index, pd.DatetimeIndex):
+        raise TypeError("Daily risk metrics require a DatetimeIndex")
+    if len(equity) < 2:
+        return pd.Series(dtype="float64", name="daily_portfolio_return")
+
+    work = equity.astype("float64").sort_index()
+    if work.index.tz is None:
+        work.index = work.index.tz_localize("UTC")
+    else:
+        work.index = work.index.tz_convert("UTC")
+    if work.index.has_duplicates:
+        raise ValueError("Equity timestamps must be unique")
+
+    initial_equity = float(work.iloc[0])
+    observations = work.iloc[1:]
+    daily_levels = observations.resample("1D").last().dropna()
+    if daily_levels.empty:
+        return pd.Series(dtype="float64", name="daily_portfolio_return")
+
+    if drop_incomplete_final_day:
+        interval = _typical_interval(observations.index)
+        final_timestamp = observations.index[-1]
+        next_midnight = final_timestamp.normalize() + pd.Timedelta(days=1)
+        if final_timestamp + interval < next_midnight:
+            daily_levels = daily_levels.iloc[:-1]
+    if daily_levels.empty:
+        return pd.Series(dtype="float64", name="daily_portfolio_return")
+
+    initial_label = daily_levels.index[0] - pd.Timedelta(days=1)
+    levels = pd.concat(
+        [
+            pd.Series([initial_equity], index=[initial_label], dtype="float64"),
+            daily_levels,
+        ]
+    )
+    returns = levels.pct_change().dropna()
+    returns.name = "daily_portfolio_return"
+    return returns
+
+
+def _aligned_period_risk_free_returns(
+    return_index: pd.Index,
+    annual_rate: float | pd.Series,
+    periods_per_year: int,
+) -> tuple[pd.Series, pd.Series]:
+    """Align annual rates without look-ahead and convert them to period returns."""
+    if isinstance(annual_rate, pd.Series):
+        rates = annual_rate.astype("float64").sort_index()
+        if not isinstance(rates.index, pd.DatetimeIndex):
+            raise TypeError("Risk-free rate series must use a DatetimeIndex")
+        if rates.index.tz is None:
+            rates.index = rates.index.tz_localize("UTC")
+        else:
+            rates.index = rates.index.tz_convert("UTC")
+        target = pd.DatetimeIndex(return_index)
+        if target.tz is None:
+            target = target.tz_localize("UTC")
+        else:
+            target = target.tz_convert("UTC")
+        aligned = rates.reindex(rates.index.union(target)).sort_index().ffill().reindex(target)
+        if aligned.isna().any():
+            first_missing = aligned.index[aligned.isna()][0]
+            raise ValueError(
+                "No risk-free observation is available on or before "
+                f"{first_missing.isoformat()}"
+            )
+        aligned.index = return_index
+    else:
+        value = float(annual_rate)
+        if not np.isfinite(value) or value <= -1:
+            raise ValueError("Annual risk-free rate must be finite and greater than -1")
+        aligned = pd.Series(value, index=return_index, dtype="float64")
+    period = (1.0 + aligned) ** (1.0 / periods_per_year) - 1.0
+    return aligned, period
 
 
 def _fills_by_time(fills: pd.DataFrame) -> pd.DataFrame:
@@ -62,16 +193,29 @@ def cumulative_costs(fills: pd.DataFrame, index: pd.Index) -> pd.Series:
 
 
 def cost_metrics(equity: pd.Series, fills: pd.DataFrame, trades: Optional[pd.DataFrame] = None,
-                 periods_per_year: int = PERIODS_PER_YEAR_30M) -> dict:
+                 periods_per_year: int = PERIODS_PER_YEAR_30M,
+                 annualize_by_elapsed_time: bool = False) -> dict:
     """Transaction-cost section of the report."""
-    n_years = (len(equity) - 1) / periods_per_year
+    n_years = (
+        _elapsed_years(equity, periods_per_year)
+        if annualize_by_elapsed_time
+        else (len(equity) - 1) / periods_per_year
+    )
     fees = fills["fee"].sum() if len(fills) else 0.0
     slip = fills["slippage_cost"].sum() if len(fills) else 0.0
     total = fees + slip
     notional = fills["notional"].sum() if len(fills) else 0.0
     gross_equity = equity + cumulative_costs(fills, equity.index)   # what equity would be with zero costs
-    ann_net = _annual_return(equity, periods_per_year)
-    ann_gross = _annual_return(gross_equity, periods_per_year)
+    ann_net = _annual_return(
+        equity,
+        periods_per_year,
+        use_elapsed_time=annualize_by_elapsed_time,
+    )
+    ann_gross = _annual_return(
+        gross_equity,
+        periods_per_year,
+        use_elapsed_time=annualize_by_elapsed_time,
+    )
     n_trades = len(trades) if trades is not None else 0
     return {
         "Annual Return (before costs)": ann_gross,
@@ -91,7 +235,12 @@ def cost_metrics(equity: pd.Series, fills: pd.DataFrame, trades: Optional[pd.Dat
 def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
                     positions=None, fills: Optional[pd.DataFrame] = None,
                     periods_per_year: int = PERIODS_PER_YEAR_30M,
-                    risk_free_rate: float = 0.0, dd_min_depth: float = 0.01) -> pd.Series:
+                    risk_free_rate: float | pd.Series = 0.0,
+                    metric_frequency: str = "bar",
+                    risk_free_source: str | None = None,
+                    drop_incomplete_final_day: bool = True,
+                    annualize_by_elapsed_time: bool = False,
+                    dd_min_depth: float = 0.01) -> pd.Series:
     """All report metrics for one strategy.
 
     equity    : portfolio value per bar
@@ -99,12 +248,31 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
     positions : position per bar (Series, or DataFrame with one column per asset)
     fills     : order log with fee / slippage_cost / notional -> transaction-cost section
     """
-    r = equity.pct_change().dropna()
+    if metric_frequency == "daily":
+        r = daily_portfolio_returns(
+            equity,
+            drop_incomplete_final_day=drop_incomplete_final_day,
+        )
+    elif metric_frequency == "bar":
+        r = equity.pct_change().dropna()
+    else:
+        raise ValueError("metric_frequency must be 'bar' or 'daily'")
+    if len(r) < 2:
+        raise ValueError("At least two complete return observations are required")
     std = r.std(ddof=1)
-    rf_bar = (1 + risk_free_rate) ** (1 / periods_per_year) - 1
-    excess = r - rf_bar
+    annual_rf, period_rf = _aligned_period_risk_free_returns(
+        r.index,
+        risk_free_rate,
+        periods_per_year,
+    )
+    excess = r - period_rf
+    excess_std = excess.std(ddof=1)
     downside = np.sqrt((np.minimum(excess, 0) ** 2).mean())
-    ann_return = _annual_return(equity, periods_per_year)
+    ann_return = _annual_return(
+        equity,
+        periods_per_year,
+        use_elapsed_time=annualize_by_elapsed_time,
+    )
     mdd = max_drawdown(equity)
     episodes = drawdown_episodes(equity, dd_min_depth)
 
@@ -112,13 +280,22 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
         "Total Return": equity.iloc[-1] / equity.iloc[0] - 1,
         "Annual Return": ann_return,
         "Annual Volatility": std * np.sqrt(periods_per_year),
-        "Sharpe Ratio": excess.mean() / std * np.sqrt(periods_per_year) if std > 0 else np.nan,
+        "Sharpe Ratio": (
+            excess.mean() / excess_std * np.sqrt(periods_per_year)
+            if excess_std > 0
+            else np.nan
+        ),
         "Sortino Ratio": excess.mean() / downside * np.sqrt(periods_per_year) if downside > 0 else np.nan,
         "Max Drawdown": mdd,
         "Calmar Ratio": ann_return / abs(mdd) if mdd < 0 else np.nan,
         f"Drawdown Count (>= {dd_min_depth:.0%})": len(episodes),
         "Longest Drawdown (days)":
             episodes["duration"].max().total_seconds() / 86400 if len(episodes) else 0.0,
+        "Risk Metric Return Frequency": metric_frequency,
+        "Risk Metric Observations": len(r),
+        "Risk Metric Periods per Year": periods_per_year,
+        "Average Annual Risk-Free Rate": annual_rf.mean(),
+        "Risk-Free Rate Source": risk_free_source or "caller-supplied assumption",
     }
 
     if trades is not None and len(trades):
@@ -143,7 +320,15 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
         out["Exposure (time in market)"] = (held.any(axis=1) if held.ndim == 2 else held).mean()
 
     if fills is not None:
-        out.update(cost_metrics(equity, fills, trades, periods_per_year))
+        out.update(
+            cost_metrics(
+                equity,
+                fills,
+                trades,
+                periods_per_year,
+                annualize_by_elapsed_time,
+            )
+        )
     return pd.Series(out)
 
 

@@ -121,7 +121,8 @@ src/portfolio_simulation.py Shared signals, USD execution, and portfolio replay
 src/strategy_backtest.py Strategy-to-backtester adapter and output writer
 src/backtest.py          Reused bar-by-bar backtest engine
 src/tracker.py           Reused cash, position, fill, trade, and cost ledger
-src/metrics.py           Reused performance and transaction-cost metrics
+src/metrics.py           Daily report risk and intraday drawdown/cost metrics
+src/risk_free.py         Official Treasury risk-free-rate CSV loader
 src/features.py          Lagged BTC features shared by training and standalone replay
 src/strategy.py          Stateful BTC ML/regime/voting strategies
 config/
@@ -130,6 +131,7 @@ config/
   two_week_strategy_optimization.json Short-horizon frequencies and compact grids
   portfolio_sizing.json      Historical SPY/STI selection sizing configuration
   three_asset_portfolio.json Final three-asset sleeves, caps, cash, and quantities
+  risk_free_rate.json        Daily risk metric and Treasury benchmark convention
   selected_strategies.json   Frozen SPY/STI rules and BTC target interface
   btc_strategy.json          Existing standalone BTC strategy reproducibility manifest
 test/                    Offline tests using synthetic data
@@ -642,6 +644,45 @@ default configuration, bounded scaling can deploy some otherwise idle cash
 only when at least two strategies are materially active. The generated
 `decisions.csv` records both the number of nonzero targets and the number that
 qualify for the scaling gate so the policy remains auditable.
+
+### Portfolio risk metrics and risk-free rate
+
+Execution and valuation remain intraday. Report-level annualised volatility,
+Sharpe, and Sortino use complete UTC-day changes in total portfolio equity so
+that adjacent 30-minute returns are not assumed to be independent. The final
+incomplete UTC day, if any, is omitted only from those daily risk statistics;
+total return, fees, positions, and intraday drawdown still use the complete
+simulation. Because BTC can change portfolio value every calendar day, daily
+risk metrics use 365 periods per year.
+
+The Sharpe benchmark is the official U.S. Treasury 3-month constant-maturity
+yield from the [U.S. Department of the Treasury daily par yield curve](https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve).
+The tracked convention is recorded in `config/risk_free_rate.json`. Download
+the 2026 official CSV before running portfolio simulations:
+
+```bash
+mkdir -p data/risk_free/raw
+curl -L --fail \
+  'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv' \
+  -o data/risk_free/raw/us_treasury_yield_curve_2026.csv
+```
+
+The downloaded CSV is ignored by Git and is supplied with the project data.
+Each published yield is made available on the following UTC calendar date, so
+weekends and holidays use the latest previously known rate without look-ahead.
+Cash does not earn interest in the simulation; the Treasury rate is used only
+as the opportunity-cost benchmark for Sharpe and Sortino.
+For daily portfolio return `r_d` and annual Treasury yield `y_d`:
+
+```text
+risk_free_daily_d = (1 + y_d)^(1/365) - 1
+annual_volatility = sample_std(r_d) * sqrt(365)
+annual_sharpe = mean(r_d - risk_free_daily_d) / sample_std(r_d) * sqrt(365)
+```
+
+Annual return is elapsed-calendar-time CAGR. Maximum drawdown continues to use
+the full intraday equity curve. The generated `simulation_manifest.json`
+records the source, maturity, lag, annualisation and partial-day conventions.
 
 Use equal weighting for a direct portfolio replay comparison:
 
