@@ -1,6 +1,6 @@
 {
   "configuration_status": "frozen_spy_sti_selection_sizing",
-  "selection_note": "Historical history-confidence sizing used to reproduce the pre-holdout SPY/STI pair-selection experiment. It is not the final three-asset integration policy; that policy is defined in config/three_asset_portfolio.json. This configuration uses only point-in-time price history, contains no return or Sharpe forecast multiplier, and retains inactive signal allocations as cash.",
+  "selection_note": "Historical history-confidence sizing used to reproduce the pre-cutoff SPY/STI pair-selection workflow. It is not the final three-asset integration policy; that policy is defined in config/three_asset_portfolio.json. This configuration uses only point-in-time price history, contains no return or Sharpe forecast multiplier, and retains inactive signal allocations as cash.",
   "method": "capped_history_confidence_inverse_volatility",
   "comparison_methods": [
     "capped_history_confidence_inverse_volatility"

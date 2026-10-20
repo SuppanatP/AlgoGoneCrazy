@@ -1,21 +1,21 @@
 {
-  "official_test_start_utc": "2026-09-30T23:59:59.999999Z",
+  "official_test_start_utc": "2026-10-01T00:00:00Z",
   "sessions_per_evaluation_window": 14,
   "window_step_sessions": 5,
   "minimum_trade_window_rate": 0.0,
   "shortlist_size": 10,
   "joint_shortlist_size": 5,
-  "selection_policy": "Use pre-holdout training windows to screen the full SPY momentum grid and expanded 120-minute STI mean-reversion grid without a per-window trading eligibility threshold. Select the final pair by the highest after-cost September joint validation return under the requested sizing method. Never use holdout data or overwrite a selected-strategy file automatically.",
+  "selection_policy": "Use pre-cutoff training windows to screen the full SPY momentum grid and expanded 120-minute STI mean-reversion grid without a per-window trading eligibility threshold. Select the final pair by the highest after-cost joint validation return before the exclusive cutoff under the requested sizing method. Never use data at or after the cutoff or overwrite a selected-strategy file automatically.",
   "joint_diagnostic_period": {
     "start": "2026-09-11T00:00:00Z",
-    "end": "2026-09-30T23:59:59.999999Z",
-    "role": "Pre-holdout validation used to select the final shortlisted SPY/STI pair."
+    "end": "2026-10-01T00:00:00Z",
+    "role": "Pre-cutoff validation used to select the final shortlisted SPY/STI pair."
   },
   "sizing_comparison_period": {
     "start": "2026-09-07T00:00:00Z",
-    "end": "2026-09-30T23:59:59.999999Z",
+    "end": "2026-10-01T00:00:00Z",
     "session_reference_asset": "spy_usd",
-    "role": "Pre-holdout rolling-window sizing diagnostic using the training-ranked SPY and STI candidates."
+    "role": "Pre-cutoff rolling-window sizing diagnostic using the training-ranked SPY and STI candidates."
   },
   "assets": {
     "spy_usd": {

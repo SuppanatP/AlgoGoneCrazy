@@ -2,7 +2,7 @@
 
 This README documents the retained strategy-selection workflow, the frozen
 SPY/STI selection, the standalone BTC strategy, and the final three-asset
-portfolio policy. Generated experiment outputs remain local and are not part
+portfolio policy. Generated selection outputs remain local and are not part
 of the tracked repository.
 
 This first project phase extracts and cleans completed five-minute source bars
@@ -15,9 +15,9 @@ for:
 It also provides separate steps that derive 30-minute OHLCV bars and apply a
 small set of conservative backfill methods. A separate strategy package
 generates momentum and mean-reversion signals, and a historical backtesting
-entry point connects those signals to the shared trade tracker. A pre-test
-parameter-comparison workflow and a training-only parameter optimiser are
-also available. A strategy-agnostic sizing layer can produce capped
+entry point connects those signals to the shared trade tracker. A reproducible
+pre-cutoff grid-search workflow selects the retained SPY/STI parameters. A
+strategy-agnostic sizing layer can produce capped
 inverse-volatility or equal-weight risk budgets before signals are applied.
 Live execution and PostgreSQL remain later phases.
 
@@ -59,11 +59,11 @@ Canonical 30m bars
       -> raw-open simulated execution
       -> trades, equity curve, costs, and comparison metrics
 
-Development-period canonical bars
-      -> configured SPY momentum and STI mean-reversion parameter grids
-      -> chronological fold backtests with the same execution and cost model
-      -> reliability filters and robustness ranking
-      -> locally saved selected parameters
+Pre-cutoff canonical bars
+      -> exact SPY momentum and STI mean-reversion parameter grids
+      -> training-period screening with the final execution and cost model
+      -> joint pre-cutoff validation under the selection-time sizing policy
+      -> reviewed parameters frozen in the tracked strategy configuration
 
 Standalone SPY/STI/BTC strategy targets
       -> daily after-cost strategy return histories before the run starts
@@ -86,6 +86,8 @@ The configuration files have distinct roles. They are not interchangeable:
 |---|---|
 | `config/selected_strategies.json` | Frozen SPY/STI rules and the BTC target-file interface |
 | `config/btc_strategy.json` | Standalone BTC models, voting, state, timing, shorting, and cost assumptions |
+| `config/sti_mean_reversion_expanded_optimization.json` | Exact SPY/STI search grids, training windows, validation windows, and cutoff |
+| `config/strategy_search_baseline.json` | Neutral comparator supplied to the grid search; not a selected result |
 | `config/portfolio_sizing.json` | Historical history-confidence sizing used only to reproduce SPY/STI pair selection |
 | `config/three_asset_portfolio.json` | Final integrated SPY/STI/BTC sizing, caps, cash reserve, and active-capital policy |
 | `config/cost_assumptions.json` | Broker commission assumptions used by selection and simulation |
@@ -155,10 +157,7 @@ src/trading_strategy/
   momentum.py            Long/cash EMA and trailing-return momentum rule
   mean_reversion.py      Long/cash rolling z-score mean-reversion rule
 src/strategy_optimizer/
-  search_space.py        Valid, deterministic strategy parameter grids
-  evaluation.py          Chronological fold evaluation through the backtester
-  selection.py           Reliability filters, robust scoring, and ranking
-  two_week.py            Cost-aware two-week screening and joint diagnostics
+  two_week.py            Grid generation, pre-cutoff screening, and joint validation
 src/portfolio_sizing/
   inverse_volatility.py  Daily volatility, equal/inverse-vol capped schedules
   fx.py                  Point-in-time conversion into the USD portfolio base
@@ -174,8 +173,8 @@ src/features.py          Lagged BTC features shared by training and standalone r
 src/strategy.py          Stateful BTC ML/regime/voting strategies
 config/
   market_data_pipeline.json  Selected assets, providers, ranges, and paths
-  strategy_optimization.json Search spaces, training folds, and constraints
-  two_week_strategy_optimization.json Short-horizon frequencies and compact grids
+  sti_mean_reversion_expanded_optimization.json Exact SPY/STI grids and periods
+  strategy_search_baseline.json Neutral grid-search input comparator
   portfolio_sizing.json      Historical SPY/STI selection sizing configuration
   three_asset_portfolio.json Final three-asset sleeves, caps, cash, and quantities
   risk_free_rate.json        Daily risk metric and Treasury benchmark convention
@@ -185,12 +184,10 @@ test/                    Offline tests using synthetic data
 run_ingestion.py         Convenient entry point
 run_aggregation.py       Separate 30m aggregation entry point
 run_backfill.py          Separate non-destructive backfill entry point
-run_consolidation.py     Canonical four-asset CSV entry point
+run_consolidation.py     Canonical three-asset CSV entry point
 run_market_data_pipeline.py  One-command sequential workflow entry point
 run_strategy_backtest.py SPY/ES3 momentum and mean-reversion backtest entry point
-run_parameter_experiments.py Pre-test parameter comparison entry point
-run_strategy_optimizer.py Development-only strategy optimisation entry point
-run_two_week_strategy_optimization.py Two-week SPY/STI review entry point
+run_two_week_strategy_optimization.py Reproducible SPY/STI selection entry point
 run_fx_ingestion.py       Downloaded FRED SGD/USD standardization entry point
 run_portfolio_weights.py  Rolling inverse-volatility/equal-weight entry point
 run_portfolio_simulation.py Shared-USD portfolio replay entry point
@@ -300,199 +297,68 @@ This is a historical simulation, not realized trading. The current raw-price
 ledger does not add separate dividend cash flows, so dividend-paying assets and
 their buy-and-hold benchmarks are compared consistently on a price-return basis.
 
-### Pre-test parameter comparison
+### Reproduce the selected SPY/STI parameters
 
-The parameter experiment uses only bars through the configured September
-cutoff. It compares three momentum and three mean-reversion configurations over
-chronological training and validation periods. Later holdout observations remain
-excluded from parameter selection.
+The retained workflow searches SPY momentum and ES3.SI mean-reversion
+parameters using only observations before the exclusive `2026-10-01T00:00:00Z`
+boundary. All timestamps are UTC; every period uses an inclusive start and
+exclusive end. BTC model selection is separate and is documented by
+`config/btc_strategy.json`.
 
-```bash
-python run_parameter_experiments.py
-```
+The complete and exact search space is tracked in
+`config/sti_mean_reversion_expanded_optimization.json`:
 
-The default outputs are `results/parameter_experiments/parameter_comparison.csv`
-and `experiment_manifest.json`. The manifest records the cutoff, periods, costs,
-and every parameter set so the comparison can be reproduced.
+| Asset | Training period | Search grid | Candidates |
+|---|---|---|---:|
+| SPY momentum | 18 Sep 2023–1 Oct 2025 | Decision interval 30/60/120m; fast horizon 1/2 sessions; slow horizon 4/6 sessions; return lookback 2/4 sessions; entry threshold 0.25%/0.50%; exit threshold 0% | 48 |
+| ES3.SI mean reversion | 6 Jul–1 Sep 2026 | Decision interval 120m; lookback 2/3/4/5/6/8/10 sessions; entry z-score -1.25/-1.50/-1.75/-2.00/-2.25/-2.50; exit z-score -0.50/-0.25/0/0.25; minimum hold 1 session; cooldown 1 session; maximum hold 5 sessions | 168 |
 
-### Strategy parameter optimisation
+Lookback horizons are converted from trading sessions to decision bars, so
+changing the decision interval does not silently change the economic horizon.
+Each candidate uses adjusted closes for features, the next eligible raw open
+for execution, raw closes for valuation, historical SGD/USD conversion, whole
+shares, and `config/cost_assumptions.json` commissions.
 
-The optimiser searches momentum parameters for SPY and mean-reversion
-parameters for ES3.SI. Every candidate is evaluated on chronological training
-folds using the existing next-bar execution, portfolio ledger, and project cost
-model. Validation observations never affect candidate ranking. BTC strategy
-development is outside this optimiser and connects through the external signal
-interface described below.
+The workflow first screens each full grid over its configured training period.
+It then reruns shortlisted candidates over independent rolling 14-session
+windows. Trade frequency is reported but is not an eligibility or ranking
+criterion. Finally, shortlisted SPY/STI pairs are compared jointly from
+`2026-09-11T00:00:00Z` to the exclusive cutoff using the history-confidence
+inverse-volatility policy in `config/portfolio_sizing.json`. The pair with the
+highest after-cost joint validation return is the selected pair.
 
-All boundaries are UTC and use an inclusive start and exclusive end. The
-selection cutoff is the final timestamp on 30 September 2026, so no later
-holdout observation enters training or validation.
-
-| Instrument | Training folds used for selection | Separate validation period |
-|---|---|---|
-| SPY | 18 Sep 2023–1 Apr 2024; 1 Apr–1 Oct 2024; 1 Oct 2024–1 Apr 2025; 1 Apr–1 Oct 2025 | 1 Oct 2025–30 Sep 2026 |
-| ES3.SI | 6–21 Jul 2026; 21 Jul–4 Aug 2026; 4–18 Aug 2026; 18 Aug–1 Sep 2026 | 1–30 Sep 2026 |
-
-The search is a deliberately small discrete grid rather than a continuous or
-every-integer search. Values represent materially different horizons while
-keeping the results understandable and limiting overfitting.
-
-| Strategy | Values searched | Valid candidates |
-|---|---|---:|
-| SPY momentum | Fast EMA: 8, 13, 26 bars; slow EMA: 26, 52, 104 bars; return lookback: 13, 26, 52 bars; entry return: 0%, 0.25%, 0.50%; exit return: -0.25%, 0% | 144 |
-| ES3.SI mean reversion | Rolling window: 20, 26, 52 bars; entry z-score: -1.25, -1.50, -2.00; exit z-score: -0.25, 0; maximum holding period: 26, 52, 104 bars | 54 |
-
-This produces 792 fold backtests: `144 x 4` for SPY and `54 x 4` for ES3.SI.
-On the current project machine, the complete training search took about two
-minutes. Allow roughly two to five minutes depending on the computer and other
-workload. `--validate-selected` repeats the training search before adding the
-two validation runs, so it takes approximately the same amount of time.
-
-Run the full training search:
-
-```bash
-python run_strategy_optimizer.py
-```
-
-Run a small connection and workflow check without completing the full grid:
-
-```bash
-python run_strategy_optimizer.py --max-candidates 2
-```
-
-After the training search has selected candidates, validation can be run
-explicitly. It is reported separately and is not fed back into the ranking:
-
-```bash
-python run_strategy_optimizer.py --validate-selected
-```
-
-Generated files are written beneath `results/strategy_optimizer/` and are
-ignored by Git:
-
-- `fold_results.csv`: one row per candidate and training fold
-- `candidate_ranking.csv`: reliability checks, aggregate metrics, and ranking
-- `selected_parameters.json`: the training-only winners
-- `validation_summary.csv`: optional untouched validation results
-- `optimization_manifest.json`: data, configuration, costs, and run settings
-
-If the group approves the winners, copy only the frozen parameter values into a
-tracked strategy configuration. Do not commit generated optimisation outputs or
-use official test-period observations to revise the parameters.
-
-### Two-week strategy review
-
-The short-horizon workflow complements the original fold optimiser. It compares
-30-, 60-, and 120-minute decision frequencies while continuing to execute at
-the next underlying 30-minute raw open. Lookbacks are expressed as trading-day
-horizons and converted to the appropriate number of decision bars, so changing
-frequency does not silently change the intended economic horizon.
-
-Every per-asset screen uses the final USD mechanics: adjusted closes for
-signals, raw prices for execution and valuation, historical SGD/USD rates,
-whole shares, the common concentration cap, and broker commissions. FX transaction
-fees are outside the project scope; exchange rates are still required for USD
-conversion and reporting. The inexpensive first pass runs every candidate once
-and derives rolling 14-session diagnostics stepped every five sessions. This
-matches the approximate length of the planned live evaluation. The windows
-overlap and are therefore robustness checks rather than independent
-statistical observations. Only the shortlist is then rerun with cash and
-positions independently reset for every 14-session window.
-
-The final diagnostic combines shortlisted SPY and STI candidates in the actual
-shared USD portfolio under both weekly capped inverse-volatility and capped
-equal weighting. A separate rolling comparison holds the top strategy pair
-fixed, so differences are caused by sizing rather than different signals. BTC
-has a zero signal while its external signal file is unavailable. Because STI
-history begins in July and sizing requires 40 daily returns, only the available
-full pre-holdout windows are included and the output records the actual count.
-The latest 20-calendar-day pre-holdout period, 11-30 September 2026, is labelled as a known diagnostic
-because earlier September results have already influenced the redesign; it is
-not described as untouched validation. No later holdout data is used, and the
-command never overwrites `config/selected_strategies.json`.
-
-Run the full compact search and diagnostic:
-
-```bash
-python run_two_week_strategy_optimization.py
-```
-
-Run only a limited workflow check, or omit both joint sizing comparisons:
-
-```bash
-python run_two_week_strategy_optimization.py --max-candidates 2
-python run_two_week_strategy_optimization.py --skip-joint-diagnostic
-```
-
-Run the expanded pre-holdout SPY/STI search without changing the original
-optimisation outputs or the frozen selected strategy:
-
-```bash
-python run_two_week_strategy_optimization.py \
-  --config-file config/sti_mean_reversion_expanded_optimization.json \
-  --output-dir results/sti_mean_reversion_expanded_optimization \
-  --progress-every 10
-```
-
-This run screens the full SPY momentum grid and the expanded 120-minute STI
-mean-reversion grid on their configured training windows. It does not reject a
-candidate merely because some historical 14-session windows contain no order;
-trade-window coverage remains visible as a diagnostic. Shortlisted SPY/STI
-pairs are then compared jointly on the September pre-holdout validation period.
-The run never reads holdout observations and never updates a selected-strategy
-configuration automatically.
-
-The simpler history-confidence experiment deliberately removes every return or
-Sharpe multiplier. It uses only inverse volatility and the amount of history
-available before each rebalance:
-
-```text
-allocation score = min(1, prior daily observations / 252) / volatility
-```
-
-It also keeps inactive allocations as cash and locks each position's quantity
-from entry until the strategy exits. Weekly weight changes therefore affect the
-next entry but do not generate resizing orders for an already-open position.
-Run the no-trade-filter training and validation experiment with:
+Run the reproducible selection:
 
 ```bash
 python run_two_week_strategy_optimization.py \
   --input-file data/canonical/market_bars_30m_training_validation.csv \
+  --fx-file data/fx/fx_rates_to_usd.csv \
   --config-file config/sti_mean_reversion_expanded_optimization.json \
   --selected-strategies config/strategy_search_baseline.json \
   --sizing-config config/portfolio_sizing.json \
-  --output-dir results/pre_holdout_joint_history_confidence_optimization \
+  --cost-config config/cost_assumptions.json \
+  --output-dir results/final_strategy_selection \
   --progress-every 10
 ```
 
-The highest after-cost joint validation result selects SPY momentum candidate
-`0041` and expanded STI mean-reversion candidate `0052`. The reviewed and
-frozen selection is stored in `config/selected_strategies.json`. The baseline
-file is intentionally separate, so the selected pair is not supplied as an
-input to its own search. The final evaluation-period simulation is reported
-separately after that period is complete.
+The neutral baseline is an input comparator; it does not feed the frozen
+selection back into its own search. The command writes generated files only to
+the ignored output directory and never edits `config/selected_strategies.json`.
+The expected winner is SPY candidate `spy_usd__momentum_0041` paired with STI
+candidate `sti_es3_sgd__mean_reversion_0052`. Their complete reviewed parameter
+values are frozen in `config/selected_strategies.json`.
 
-The ignored directory `results/two_week_strategy_optimization/` contains:
+Important generated outputs are:
 
-- `candidate_screening.csv`: full-period and inexpensive two-week candidate metrics
-- `two_week_continuous_windows.csv`: first-pass rolling 14-session diagnostics
-- `two_week_independent_windows.csv`: exact reset-window results for the shortlist
-- `shortlisted_candidate_review.csv`: shortlist comparison used for discussion
-- `sizing_method_comparison_windows.csv`: same top strategy pair under both sizing methods in rolling pre-holdout windows
-- `sizing_method_comparison_summary.csv`: concise inverse-volatility versus equal-weight comparison
-- `joint_diagnostic_summary.csv`: known September shared-portfolio comparison
-- `optimization_manifest.json`: data, periods, costs, sizing, and grid snapshot
+- `candidate_screening.csv`: every grid candidate's full-period result;
+- `two_week_independent_windows.csv`: reset-window shortlist diagnostics;
+- `shortlisted_candidate_review.csv`: per-asset shortlist ranking;
+- `joint_diagnostic_summary.csv`: joint pair results used for final selection;
+- `optimization_manifest.json`: periods, grids, execution, costs, and sizing snapshot.
 
-The sizing comparison ranks methods for review but does not change the historical
-selection setup automatically. `config/portfolio_sizing.json` remains the
-history-confidence configuration used to reproduce the SPY/STI selection;
-`config/three_asset_portfolio.json` separately defines final integration sizing.
-
-There is no minimum trade-window eligibility condition. Completed candidates
-are ranked by median after-cost return, profitable-window rate,
-worst-window return, and finally cost rate. Trade frequency is reported but is
-not a ranking variable. This remains a shortlist aid rather than an automatic
-strategy-selection rule.
+For a quick workflow check only, add `--max-candidates 2`. Add
+`--skip-joint-diagnostic` only when checking the per-asset stages; a run without
+joint validation cannot reproduce the final pair.
 
 ### Portfolio sizing
 
@@ -524,11 +390,9 @@ Target changes smaller than five percentage points are ignored to limit
 resizing costs. Whole shares are used for SPY and ES3.SI; BTC uses fractional
 units.
 
-`config/three_asset_portfolio_cash_baseline.json` preserves the earlier
-cash-retention policy for an apples-to-apples pre-holdout comparison. It does
-not resize an existing position when another strategy changes. The default
-`config/three_asset_portfolio.json` enables bounded active-capital scaling and
-allows thresholded resizing so that the new portfolio targets can take effect.
+`config/three_asset_portfolio.json` is the sole retained integration policy. It
+enables bounded active-capital scaling and allows thresholded resizing so that
+the portfolio targets can take effect.
 
 The portfolio simulation starts with USD 500,000 in cash and no positions.
 There are no later external deposits or withdrawals. Sale proceeds, dividends,
@@ -658,17 +522,10 @@ delay BTC again. SPY and STI decisions still execute at the next eligible open.
 BTC strategy state advances sequentially during export. The standalone
 `state.json` portfolio cash is not imported into the shared ledger.
 
-Compare the old cash-retention rule and bounded active-capital rule over the
-same pre-holdout period after generating BTC targets:
+Run the integrated policy over a pre-cutoff period after generating BTC
+targets:
 
 ```bash
-python run_portfolio_simulation.py \
-  --input-file data/canonical/market_bars_30m_training_validation.csv \
-  --start 2026-09-01 \
-  --end 2026-10-01 \
-  --sizing-config config/three_asset_portfolio_cash_baseline.json \
-  --output-dir results/integration_policy_pre_holdout_cash_baseline
-
 python run_portfolio_simulation.py \
   --input-file data/canonical/market_bars_30m_training_validation.csv \
   --start 2026-09-01 \
@@ -677,12 +534,11 @@ python run_portfolio_simulation.py \
   --output-dir results/material_active_scaling_pre_holdout
 ```
 
-Both output directories are ignored. Compare `performance_summary.csv`,
+The output directory is ignored. Review `performance_summary.csv`,
 `asset_summary.csv`, and the raw-versus-scaled target columns in
-`decisions.csv`. The cash baseline must reproduce the earlier integration
-result before interpreting the new policy. A missing BTC target file stops a
-complete run; `--allow-missing-external` is only a temporary connectivity mode
-and must not be used for policy selection. The simulator uses one USD 500,000
+`decisions.csv`. A missing BTC target file stops a complete run;
+`--allow-missing-external` is only a temporary connectivity mode and must not
+be used for policy selection. The simulator uses one USD 500,000
 ledger, historical
 SGD/USD rates, USDT/USD at 1:1, whole units for SPY/ES3.SI, fractional BTC,
 configured broker commissions, no separate FX transaction fee, and the next
@@ -731,22 +587,9 @@ Annual return is elapsed-calendar-time CAGR. Maximum drawdown continues to use
 the full intraday equity curve. The generated `simulation_manifest.json`
 records the source, maturity, lag, annualisation and partial-day conventions.
 
-Use equal weighting for a direct portfolio replay comparison:
-
-```bash
-python run_portfolio_simulation.py \
-  --start 2026-09-01 \
-  --end 2026-09-30T23:59:59Z \
-  --allow-missing-external \
-  --sizing-method capped_equal_weight \
-  --output-dir results/portfolio_simulation_equal_weight
-```
-
-Equal weighting remains a benchmark; inverse standalone strategy-return
-volatility with cash retention is the configured integration method. Holdout
-market data and generated targets are supplied separately in ignored paths.
-Do not rerun the optimiser or revise frozen parameters after inspecting a
-holdout result.
+Evaluation-period market data and generated targets are supplied separately in
+ignored paths. Do not rerun the optimiser or revise frozen parameters after
+the `2026-10-01T00:00:00Z` selection boundary.
 
 Outputs beneath `results/portfolio_simulation/` include `decisions.csv`,
 `fills.csv`, `trades.csv`, `equity_curve.csv`, `performance_summary.csv`,
@@ -895,8 +738,6 @@ python run_backfill.py --help
 python run_consolidation.py --help
 python run_market_data_pipeline.py --help
 python run_strategy_backtest.py --help
-python run_parameter_experiments.py --help
-python run_strategy_optimizer.py --help
 python run_two_week_strategy_optimization.py --help
 python run_fx_ingestion.py --help
 python run_portfolio_weights.py --help
@@ -952,10 +793,23 @@ data is unavailable.
 pre-holdout dataset used for strategy training and validation. Its ES3.SI rows
 come from
 `data/staging/combined_history/yahoo_finance/ES3_SI/market_bars_30m_with_backfill.csv`,
-That combined STI history merges the earlier and later Yahoo batches, removes
+The combined STI history merges the earlier and later Yahoo batches, removes
 duplicate overlaps, and covers 6 July 2026 through 30 September 2026. The exact
 inputs and row ranges are recorded in
 `data/canonical/consolidation_summary_training_validation.json`.
+
+Regenerate this exact three-asset canonical layout from the supplied staging
+directories with:
+
+```bash
+python run_consolidation.py \
+  --input-dir data/staging/alpaca_market_data/SPY \
+  --input-dir data/staging/backtest_cutoff/alpaca_market_data/SPY \
+  --input-dir data/staging/binance_spot/BTCUSDT \
+  --input-dir data/staging/combined_history/yahoo_finance/ES3_SI \
+  --output-file data/canonical/market_bars_30m_training_validation.csv \
+  --summary-file data/canonical/consolidation_summary_training_validation.json
+```
 
 Evaluation-period data, pipeline settings, consolidated files and reports are
 kept in ignored local paths and supplied separately from the repository. They
