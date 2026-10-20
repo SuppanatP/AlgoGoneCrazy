@@ -1,7 +1,9 @@
 # FE5209 Group Project - Market Data Pipeline
 
-The tracked experiment history, retained configurations, final SPY/STI
-selection, and final-period data policy are summarized in `EXPERIMENTS.md`.
+This README documents the retained strategy-selection workflow, the frozen
+SPY/STI selection, the standalone BTC strategy, and the final three-asset
+portfolio policy. Generated experiment outputs remain local and are not part
+of the tracked repository.
 
 This first project phase extracts and cleans completed five-minute source bars
 for:
@@ -67,7 +69,7 @@ Standalone SPY/STI/BTC strategy targets
       -> daily after-cost strategy return histories before the run starts
       -> inverse strategy-return volatility sleeves
       -> cap STI at 10%, SPY/BTC at 75%, and reserve 5% cash
-      -> retain every inactive strategy sleeve as cash
+      -> apply the configured materially-active capital-scaling policy
 
 Selected SPY/STI strategies + stateful BTC target export
       -> delay SPY/STI to the next eligible raw open; execute BTC at its listed open
@@ -75,6 +77,51 @@ Selected SPY/STI strategies + stateful BTC target export
       -> execute through one USD cash and position ledger
       -> decisions, fills, trades, equity, costs, and per-asset P&L
 ```
+
+### Configuration authority
+
+The configuration files have distinct roles. They are not interchangeable:
+
+| File | Authoritative role |
+|---|---|
+| `config/selected_strategies.json` | Frozen SPY/STI rules and the BTC target-file interface |
+| `config/btc_strategy.json` | Standalone BTC models, voting, state, timing, shorting, and cost assumptions |
+| `config/portfolio_sizing.json` | Historical history-confidence sizing used only to reproduce SPY/STI pair selection |
+| `config/three_asset_portfolio.json` | Final integrated SPY/STI/BTC sizing, caps, cash reserve, and active-capital policy |
+| `config/cost_assumptions.json` | Broker commission assumptions used by selection and simulation |
+| `config/risk_free_rate.json` | Risk-free benchmark and daily performance-reporting convention |
+
+The final simulation therefore combines the signals in
+`config/selected_strategies.json` with the portfolio policy in
+`config/three_asset_portfolio.json`. The older selection-time sizing remains
+tracked only because it is needed to reproduce how the SPY/STI pair was chosen.
+
+### Information timing and look-ahead controls
+
+- SPY and STI features include the current completed decision bar. Their
+  resulting targets execute only at the next eligible underlying bar open,
+  using raw tradable prices.
+- BTC feature row `t` is shifted to use market observations only through
+  `t-1`; its exported target therefore applies directly at the raw open of
+  bar `t` and must not receive another delay.
+- Training and validation periods are chronological. Forward BTC labels that
+  overlap the next split are purged, and the label threshold is estimated from
+  training rows only.
+- Portfolio risk estimates and sleeve weights use observations strictly before
+  the sizing timestamp. Evaluation-period returns cannot enter the initial
+  allocation.
+- SGD/USD and Treasury observations become usable only after their configured
+  availability lag. Treasury rates affect Sharpe and Sortino reporting only;
+  simulated cash does not earn interest.
+- A backfilled bar may preserve feature continuity, but only final bars with
+  `bar_origin=derived_complete` may change a SPY/STI strategy position. A
+  synthetic boundary bar therefore cannot directly create an executable
+  signal.
+
+Adjusted closes are used for analytical features, while raw opens and closes
+are used for simulated execution and valuation. This is the project's stated
+corporate-action convention; separate dividend cash flows and point-in-time
+corporate-action snapshots are not modelled.
 
 Five minutes is the source resolution. It preserves enough detail to construct
 15-minute, 30-minute, hourly, or two-hour bars later without committing the

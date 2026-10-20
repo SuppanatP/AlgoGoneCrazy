@@ -1,7 +1,7 @@
 {
   "configuration_status": "frozen_final_training_validation_selection",
   "signal_timing": "asset_specific_see_each_asset_execution_timing",
-  "selection_note": "The SPY and expanded STI grids were screened on their configured training windows without a per-window trade filter. This pair had the highest after-cost joint validation return under the final history-confidence sizing rule. Only the configured training and validation observations were used for candidate ranking and pair selection.",
+  "selection_note": "The SPY and expanded STI grids were screened on their configured training windows without a per-window trade filter. This pair had the highest after-cost joint validation return under the frozen history-confidence sizing used for SPY/STI selection. That selection-time sizing is separate from the final three-asset integration policy in config/three_asset_portfolio.json. Only configured pre-holdout training and validation observations were used for candidate ranking and pair selection.",
   "assets": {
     "spy_usd": {
       "signal_source": "rule_based",

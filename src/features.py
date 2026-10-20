@@ -37,10 +37,10 @@ def build_features(bars: pd.DataFrame, asset: str | None = None,
     all_bars : {asset: bars} for every asset, for cross-asset features
                (e.g. BTC returns as a feature for ETH); ignore if not needed
 
-    !!! EXAMPLE ONLY !!! Replace the body with the exact feature code used to train
-    your models (move it here from data_preprocess.ipynb), so live features match
-    training features column for column. The runner selects the columns the model
-    was trained on (booster.feature_name()), so every one of them must be produced here.
+    This is the shared feature implementation used by model training, standalone
+    replay, and target export. The runner selects the columns recorded in each
+    model (booster.feature_name()), so training and execution use the same named
+    inputs column for column.
     """
     import numpy as np
 
