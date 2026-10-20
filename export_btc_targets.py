@@ -25,6 +25,8 @@ def export_targets(
     input_file: str | Path | None = None,
 ) -> pd.DataFrame:
     """Export targets for inclusive UTC dates ``start`` through ``end``."""
+    if hasattr(cfg, "verify_selected_model_hashes"):
+        cfg.verify_selected_model_hashes()
     if list(cfg.ASSETS) != ["BTC"]:
         raise ValueError("BTC target export requires config.ASSETS to contain only BTC")
 

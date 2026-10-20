@@ -82,6 +82,8 @@ def strategy_params(cfg, asset: str) -> dict:
 class DailyRunner:
     def __init__(self, cfg=config):
         self.cfg = cfg
+        if hasattr(cfg, "verify_selected_model_hashes"):
+            cfg.verify_selected_model_hashes()
         self.assets = list(cfg.ASSETS)
         self.weights = {a: cfg.ASSETS[a]["weight"] for a in self.assets}
 

@@ -1,6 +1,8 @@
 {
   "configuration_status": "standalone_btc_strategy_baseline",
   "purpose": "Reproducibility manifest for the existing BTC ML and voting strategy before three-asset integration.",
+  "manifest_role": "Authoritative executable configuration for standalone BTC replay and target export.",
+  "provenance_note": "Assembled from the tracked BTC implementation, selected model files, training and rule-search commands, and recorded strategy settings. The original generated model-training metadata file was unavailable, so reconstructed fields remain explicitly labelled.",
   "instrument": {
     "runtime_asset_id": "BTC",
     "canonical_instrument_id": "btc_usdt",
@@ -73,6 +75,7 @@
     "partial_stop_loss_atr": 0.0,
     "partial_fraction": 0.5,
     "partial_entry_minimum_score": 0.0,
+    "partial_entry_volatility_threshold": 0.35,
     "partial_entry_size": 0.25,
     "daily_fallback": true,
     "fallback_hour_utc": 20,

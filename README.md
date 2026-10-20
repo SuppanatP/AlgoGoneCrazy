@@ -761,8 +761,12 @@ The existing BTC workflow is separate from the SPY momentum and STI
 mean-reversion modules. It loads the tracked LightGBM up/down models, calculates
 lagged features, combines technical-rule votes, and maintains a stateful target
 through holding periods, partial exits, and a daily fallback. The reproducibility
-manifest is `config/btc_strategy.json`; `config.py` remains the executable
-configuration used by `run_daily.py` and `report_metrics.py`.
+manifest is `config/btc_strategy.json`. The executable `config.py` loads its BTC
+model, data, strategy, and cost values from that manifest instead of maintaining
+a second independent copy. Standalone replay and target export also verify the
+selected model-file hashes before processing any bars. Runtime `state.json`
+files remain ignored because they describe a particular run rather than the
+strategy methodology.
 
 The runner reads `btc_usdt` rows from the frozen canonical training/validation
 file. When `data/canonical/market_bars_30m_simulation_live_to_date.csv` exists,
