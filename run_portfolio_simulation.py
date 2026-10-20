@@ -33,6 +33,7 @@ from src.portfolio_sizing import (  # noqa: E402
     rebalance_dates,
 )
 from src.strategy_backtest import load_canonical_bars  # noqa: E402
+from src.risk_free import load_configured_risk_free_rates  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,6 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--cost-config",
         type=Path,
         default=Path("config/cost_assumptions.json"),
+    )
+    parser.add_argument(
+        "--risk-free-config",
+        type=Path,
+        default=Path("config/risk_free_rate.json"),
+        help="Official risk-free-rate source and daily reporting convention.",
     )
     parser.add_argument("--start", required=True, help="Inclusive UTC start.")
     parser.add_argument("--end", required=True, help="Exclusive UTC end.")
@@ -141,6 +148,9 @@ def main() -> None:
     )
 
     cost_assumptions = load_cost_assumptions(args.cost_config)
+    risk_free_rates, risk_free_settings = load_configured_risk_free_rates(
+        args.risk_free_config
+    )
     execution_signals, signal_output, unavailable = build_execution_signals(
         canonical,
         strategy_config,
@@ -228,6 +238,11 @@ def main() -> None:
         start,
         end,
         slippage_bps=args.slippage_bps,
+        risk_free_annual_rates=risk_free_rates,
+        risk_free_source=str(risk_free_settings["source_name"]),
+        risk_metric_periods_per_year=int(
+            risk_free_settings["annualization_days"]
+        ),
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -266,6 +281,7 @@ def main() -> None:
         "sizing_config": str(args.sizing_config),
         "strategy_config": str(args.strategy_config),
         "cost_config": str(args.cost_config),
+        "risk_free_config": str(args.risk_free_config),
         "requested_start_utc": start.isoformat(),
         "requested_end_utc_exclusive": end.isoformat(),
         "effective_start_utc": risk_weights.index.min().isoformat(),
@@ -311,6 +327,35 @@ def main() -> None:
         "feature_prices": "adjusted_close",
         "dividend_cash_flows_included": False,
         "slippage_bps": args.slippage_bps,
+        "risk_metrics": {
+            "return_frequency": risk_free_settings[
+                "portfolio_return_frequency"
+            ],
+            "daily_boundary_timezone": risk_free_settings[
+                "daily_boundary_timezone"
+            ],
+            "partial_final_day_policy": risk_free_settings[
+                "partial_final_day_policy"
+            ],
+            "annualization_days": int(
+                risk_free_settings["annualization_days"]
+            ),
+            "annual_return_method": risk_free_settings[
+                "annual_return_method"
+            ],
+            "risk_free_benchmark": risk_free_settings["benchmark"],
+            "risk_free_source": risk_free_settings["source_name"],
+            "risk_free_source_url": risk_free_settings["source_url"],
+            "risk_free_input_file": risk_free_settings["input_file"],
+            "risk_free_yield_column": risk_free_settings["yield_column"],
+            "risk_free_availability_lag_days": int(
+                risk_free_settings["availability_lag_days"]
+            ),
+            "cash_interest_policy": risk_free_settings[
+                "cash_interest_policy"
+            ],
+            "drawdown_frequency": risk_free_settings["drawdown_frequency"],
+        },
     }
     (args.output_dir / "simulation_manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
