@@ -50,11 +50,6 @@
       "quote_currency": "SGD",
       "annualization_periods": 252,
       "quantity_step": 1.0
-    },
-    "btc_usdt": {
-      "quote_currency": "USDT",
-      "annualization_periods": 365,
-      "quantity_step": 0.000001
     }
   }
 }

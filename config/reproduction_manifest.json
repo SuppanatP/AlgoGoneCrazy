@@ -53,7 +53,7 @@
     },
     "selection_time_sizing": {
       "path": "config/portfolio_sizing.json",
-      "sha256": "8aef6651f8447dfc6e8a935e97422d93d05efd711f7850acc0dd7c40343fea37"
+      "sha256": "8eb95f14a1f69362923c6d005beb8d1ae1db6f78fc7125045a74e5306ef7a977"
     },
     "transaction_costs": {
       "path": "config/cost_assumptions.json",
