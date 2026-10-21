@@ -114,7 +114,7 @@ tracked only because it is needed to reproduce how the SPY/STI pair was chosen.
   the sizing timestamp. Evaluation-period returns cannot enter the initial
   allocation.
 - SGD/USD and Treasury observations become usable only after their configured
-  availability lag. Treasury rates affect Sharpe and Sortino reporting only;
+  availability lag. Treasury rates affect Sharpe reporting only;
   simulated cash does not earn interest.
 - A backfilled bar may preserve feature continuity, but only final bars with
   `bar_origin=derived_complete` may change a SPY/STI strategy position. A
@@ -558,8 +558,8 @@ qualify for the scaling gate so the policy remains auditable.
 
 ### Portfolio risk metrics and risk-free rate
 
-Execution and valuation remain intraday. Report-level annualised volatility,
-Sharpe, and Sortino use complete UTC-day changes in total portfolio equity so
+Execution and valuation remain intraday. Report-level annualised volatility
+and Sharpe use complete UTC-day changes in total portfolio equity so
 that adjacent 30-minute returns are not assumed to be independent. The final
 incomplete UTC day, if any, is omitted only from those daily risk statistics;
 total return, fees, positions, and intraday drawdown still use the complete
@@ -582,7 +582,7 @@ The downloaded CSV is ignored by Git and is supplied with the project data.
 Each published yield is made available on the following UTC calendar date, so
 weekends and holidays use the latest previously known rate without look-ahead.
 Cash does not earn interest in the simulation; the Treasury rate is used only
-as the opportunity-cost benchmark for Sharpe and Sortino.
+as the opportunity-cost benchmark for Sharpe.
 For daily portfolio return `r_d` and annual Treasury yield `y_d`:
 
 ```text
@@ -595,8 +595,7 @@ Annual return is elapsed-calendar-time CAGR. Maximum drawdown continues to use
 the full intraday equity curve. The generated `simulation_manifest.json`
 records the source, maturity, lag, annualisation and partial-day conventions.
 `Drawdown Count` records every episode from the first move below a running peak
-until recovery or the simulation cutoff. The separate one-percent count remains
-in the detailed diagnostics as a material-drawdown threshold.
+until recovery or the simulation cutoff.
 
 Evaluation-period market data and generated targets are supplied separately in
 ignored paths. Do not rerun the optimiser or revise frozen parameters after
@@ -607,7 +606,7 @@ Outputs beneath `results/portfolio_simulation/` include `decisions.csv`,
 `project_metrics.csv`, `asset_summary.csv`, risk and FX diagnostics, and a
 reproducibility manifest. `project_metrics.csv` is the concise presentation
 table containing P&L and the metrics requested in the project brief;
-`performance_summary.csv` retains the complete diagnostic output.
+`performance_summary.csv` contains the same submission-facing metric set.
 Positions remain open at the final close to match a live-period snapshot. Raw
 prices are used for execution and valuation; separate dividend cash flows are
 not yet present in the source data and are recorded as excluded in the manifest.

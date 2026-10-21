@@ -1132,10 +1132,6 @@ def simulate_portfolio(
     metrics["Initial Equity"] = initial_cash
     metrics["Final Equity"] = float(result.equity.iloc[-1])
     metrics["Net Profit"] = float(result.equity.iloc[-1] - initial_cash)
-    metrics["Minimum Cash Weight"] = float((curve["cash"] / curve["equity"]).min())
-    metrics["Average Cash Weight"] = float((curve["cash"] / curve["equity"]).mean())
-    metrics["Average Gross Exposure"] = float(curve["gross_exposure"].mean())
-    metrics["Maximum Gross Exposure"] = float(curve["gross_exposure"].max())
 
     signal_output = signal_output.loc[
         signal_output["bar_open_time_utc"].ge(effective_start)

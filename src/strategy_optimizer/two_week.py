@@ -814,6 +814,11 @@ def run_joint_diagnostics(
             slippage_bps=slippage_bps,
         )
         asset_summary = artifacts.asset_summary.set_index("instrument_id")
+        transaction_cost_usd = float(
+            artifacts.result.fills["total_cost"].sum()
+            if not artifacts.result.fills.empty
+            else 0.0
+        )
         row = {
             "sizing_method": sizing_method,
             "spy_candidate_id": spy.candidate_id,
@@ -828,17 +833,12 @@ def run_joint_diagnostics(
             "net_return": float(artifacts.metrics["Total Return"]),
             "net_profit_usd": float(artifacts.metrics["Net Profit"]),
             "gross_profit_before_cost_usd": float(
-                artifacts.metrics["Net Profit"]
-                + artifacts.metrics["Total Transaction Cost"]
+                artifacts.metrics["Net Profit"] + transaction_cost_usd
             ),
             "max_drawdown": float(artifacts.metrics["Max Drawdown"]),
-            "orders": int(artifacts.metrics["Number of Orders"]),
+            "orders": int(len(artifacts.result.fills)),
             "completed_round_trips": int(artifacts.metrics["Number of Trades"]),
-            "transaction_cost_usd": float(
-                artifacts.metrics["Total Transaction Cost"]
-            ),
-            "minimum_cash_weight": float(artifacts.metrics["Minimum Cash Weight"]),
-            "average_cash_weight": float(artifacts.metrics["Average Cash Weight"]),
+            "transaction_cost_usd": transaction_cost_usd,
             "btc_signals_unavailable": "btc_usdt" in unavailable,
         }
         for instrument_id in ("spy_usd", "sti_es3_sgd"):

@@ -9,10 +9,10 @@
   "yield_units": "percent_per_annum",
   "availability_lag_days": 1,
   "availability_policy": "Each published business-day yield becomes usable on the following UTC calendar date; weekends and holidays use the latest previously available observation.",
-  "cash_interest_policy": "Cash does not accrue interest in the simulation; the Treasury rate is used only as the Sharpe and Sortino opportunity-cost benchmark.",
+  "cash_interest_policy": "Cash does not accrue interest in the simulation; the Treasury rate is used only as the Sharpe opportunity-cost benchmark.",
   "portfolio_return_frequency": "daily",
   "daily_boundary_timezone": "UTC",
-  "partial_final_day_policy": "exclude_from_volatility_sharpe_sortino",
+  "partial_final_day_policy": "exclude_from_annualized_volatility_and_sharpe",
   "annualization_days": 365,
   "annual_return_method": "elapsed_calendar_time_cagr",
   "drawdown_frequency": "intraday_equity_curve"
