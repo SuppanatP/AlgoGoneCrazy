@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-file",
         type=Path,
-        default=Path("data/canonical/market_bars_30m_simulation_live_to_date.csv"),
+        default=Path("data/canonical/market_bars_30m_simulation.csv"),
     )
     parser.add_argument(
         "--fx-file",

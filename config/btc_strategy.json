@@ -11,7 +11,7 @@
   },
   "data": {
     "training_validation_file": "data/canonical/market_bars_30m_training_validation.csv",
-    "live_simulation_file": "data/canonical/market_bars_30m_simulation_live_to_date.csv",
+    "live_simulation_file": "data/canonical/market_bars_30m_simulation.csv",
     "timestamp_column": "bar_open_time_utc",
     "instrument_column": "instrument_id",
     "warmup_days": 14,

@@ -38,7 +38,7 @@
     },
     "fx_rates": {
       "path": "data/fx/fx_rates_to_usd.csv",
-      "sha256": "51ec9fde366f48e472d369448ef2d95e606c7f5832e91981ce88e59f1c7aa046",
+      "sha256": "344828ebeb5297b50168e8f52edb98f7047948d378960483c6d1b9766e76656e",
       "tracked_by_git": false
     }
   },
@@ -65,7 +65,7 @@
     },
     "btc_reproducibility_manifest": {
       "path": "config/btc_strategy.json",
-      "sha256": "a285e447e1e8c5fd022b8c7483a8391154187510fdac96907990be081681640e",
+      "sha256": "1c74f6416350324c49a755b34288f69e874a86c74c43d9de107f8c1f766fa43b",
       "note": "The BTC manifest contains the selected model-file paths and their own SHA-256 fingerprints; BTC is not part of the SPY/STI grid search."
     },
     "python_requirements": {

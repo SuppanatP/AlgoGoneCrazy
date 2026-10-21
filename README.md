@@ -620,7 +620,7 @@ files remain ignored because they describe a particular run rather than the
 strategy methodology.
 
 The runner reads `btc_usdt` rows from the frozen canonical training/validation
-file. When `data/canonical/market_bars_30m_simulation_live_to_date.csv` exists,
+file. When `data/canonical/market_bars_30m_simulation.csv` exists,
 it is appended as the later source and wins on duplicate timestamps. Both files
 are ignored and supplied separately from the repository.
 
