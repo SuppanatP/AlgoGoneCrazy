@@ -339,7 +339,7 @@ python run_two_week_strategy_optimization.py \
   --selected-strategies config/strategy_search_baseline.json \
   --sizing-config config/portfolio_sizing.json \
   --cost-config config/cost_assumptions.json \
-  --output-dir results/final_strategy_selection \
+  --output-dir results/strategy_selection \
   --progress-every 10
 ```
 

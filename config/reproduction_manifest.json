@@ -19,7 +19,7 @@
     "--cost-config",
     "config/cost_assumptions.json",
     "--output-dir",
-    "results/final_strategy_selection",
+    "results/strategy_selection",
     "--progress-every",
     "10"
   ],
@@ -61,7 +61,7 @@
     },
     "frozen_selection": {
       "path": "config/selected_strategies.json",
-      "sha256": "9dfa967c5f31318030f925d943e06d93aafd9fb89e4f01190e4dd18f1e6cf7f9"
+      "sha256": "96415ac5eee5aa13631b7157dd6be701cc5c6b4c6479729b68486868b2e00f7c"
     },
     "btc_reproducibility_manifest": {
       "path": "config/btc_strategy.json",
@@ -108,7 +108,7 @@
     "scikit_learn": "1.9.1"
   },
   "generated_outputs": {
-    "directory": "results/final_strategy_selection",
+    "directory": "results/strategy_selection",
     "tracked_by_git": false,
     "note": "The run-specific optimization_manifest.json and result tables are generated evidence, not authoritative inputs."
   }

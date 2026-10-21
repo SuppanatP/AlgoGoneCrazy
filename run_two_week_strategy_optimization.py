@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("results/final_strategy_selection"),
+        default=Path("results/strategy_selection"),
     )
     parser.add_argument("--slippage-bps", type=float, default=0.0)
     parser.add_argument(
