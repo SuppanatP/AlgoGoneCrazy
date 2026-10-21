@@ -274,7 +274,8 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
         use_elapsed_time=annualize_by_elapsed_time,
     )
     mdd = max_drawdown(equity)
-    episodes = drawdown_episodes(equity, dd_min_depth)
+    all_episodes = drawdown_episodes(equity, min_depth=0.0)
+    material_episodes = drawdown_episodes(equity, min_depth=dd_min_depth)
 
     out = {
         "Total Return": equity.iloc[-1] / equity.iloc[0] - 1,
@@ -288,9 +289,12 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
         "Sortino Ratio": excess.mean() / downside * np.sqrt(periods_per_year) if downside > 0 else np.nan,
         "Max Drawdown": mdd,
         "Calmar Ratio": ann_return / abs(mdd) if mdd < 0 else np.nan,
-        f"Drawdown Count (>= {dd_min_depth:.0%})": len(episodes),
+        "Drawdown Count": len(all_episodes),
+        f"Drawdown Count (>= {dd_min_depth:.0%})": len(material_episodes),
         "Longest Drawdown (days)":
-            episodes["duration"].max().total_seconds() / 86400 if len(episodes) else 0.0,
+            all_episodes["duration"].max().total_seconds() / 86400
+            if len(all_episodes)
+            else 0.0,
         "Risk Metric Return Frequency": metric_frequency,
         "Risk Metric Observations": len(r),
         "Risk Metric Periods per Year": periods_per_year,

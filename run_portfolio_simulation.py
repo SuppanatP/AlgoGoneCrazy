@@ -270,6 +270,22 @@ def main() -> None:
     pd.DataFrame([artifacts.metrics.to_dict()]).to_csv(
         args.output_dir / "performance_summary.csv", index=False
     )
+    project_metric_columns = [
+        "Net Profit",
+        "Total Return",
+        "Annual Return",
+        "Sharpe Ratio",
+        "Max Drawdown",
+        "Win Rate",
+        "Annual Volatility",
+        "Drawdown Count",
+        "Number of Trades",
+        "Average Holding Period (hours)",
+        "Profit per Trade",
+    ]
+    pd.DataFrame(
+        [{column: artifacts.metrics[column] for column in project_metric_columns}]
+    ).to_csv(args.output_dir / "project_metrics.csv", index=False)
     artifacts.asset_summary.to_csv(
         args.output_dir / "asset_summary.csv", index=False
     )

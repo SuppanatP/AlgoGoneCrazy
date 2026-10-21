@@ -594,6 +594,9 @@ annual_sharpe = mean(r_d - risk_free_daily_d) / sample_std(r_d) * sqrt(365)
 Annual return is elapsed-calendar-time CAGR. Maximum drawdown continues to use
 the full intraday equity curve. The generated `simulation_manifest.json`
 records the source, maturity, lag, annualisation and partial-day conventions.
+`Drawdown Count` records every episode from the first move below a running peak
+until recovery or the simulation cutoff. The separate one-percent count remains
+in the detailed diagnostics as a material-drawdown threshold.
 
 Evaluation-period market data and generated targets are supplied separately in
 ignored paths. Do not rerun the optimiser or revise frozen parameters after
@@ -601,7 +604,10 @@ the `2026-10-01T00:00:00Z` selection boundary.
 
 Outputs beneath `results/portfolio_simulation/` include `decisions.csv`,
 `fills.csv`, `trades.csv`, `equity_curve.csv`, `performance_summary.csv`,
-`asset_summary.csv`, risk and FX diagnostics, and a reproducibility manifest.
+`project_metrics.csv`, `asset_summary.csv`, risk and FX diagnostics, and a
+reproducibility manifest. `project_metrics.csv` is the concise presentation
+table containing P&L and the metrics requested in the project brief;
+`performance_summary.csv` retains the complete diagnostic output.
 Positions remain open at the final close to match a live-period snapshot. Raw
 prices are used for execution and valuation; separate dividend cash flows are
 not yet present in the source data and are recorded as excluded in the manifest.
