@@ -19,6 +19,7 @@ from src.market_data.costs import load_cost_assumptions  # noqa: E402
 from src.portfolio_simulation import (  # noqa: E402
     build_execution_signals,
     daily_strategy_returns_after_costs,
+    simulate_buy_and_hold_benchmark,
     simulate_portfolio,
 )
 from src.portfolio_sizing import (  # noqa: E402
@@ -244,6 +245,21 @@ def main() -> None:
             risk_free_settings["annualization_days"]
         ),
     )
+    benchmark = simulate_buy_and_hold_benchmark(
+        canonical,
+        risk_weights,
+        fx_rates,
+        sizing_config,
+        cost_assumptions,
+        start,
+        end,
+        slippage_bps=args.slippage_bps,
+        risk_free_annual_rates=risk_free_rates,
+        risk_free_source=str(risk_free_settings["source_name"]),
+        risk_metric_periods_per_year=int(
+            risk_free_settings["annualization_days"]
+        ),
+    )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     weight_output = risk_weights.copy()
@@ -269,7 +285,11 @@ def main() -> None:
     )
     project_metric_columns = [
         "Net Profit",
+        "Realized Net P&L",
+        "Unrealized Mark-to-Market P&L",
         "Total Return",
+        "Realized Return Contribution",
+        "Unrealized Return Contribution",
         "Annual Return",
         "Sharpe Ratio",
         "Max Drawdown",
@@ -287,6 +307,37 @@ def main() -> None:
         args.output_dir / "performance_summary.csv", index=False
     )
     project_metrics.to_csv(args.output_dir / "project_metrics.csv", index=False)
+    comparison_metric_columns = [
+        "Net Profit",
+        "Realized Net P&L",
+        "Unrealized Mark-to-Market P&L",
+        "Total Return",
+        "Realized Return Contribution",
+        "Unrealized Return Contribution",
+        "Annual Return",
+        "Sharpe Ratio",
+        "Max Drawdown",
+        "Annual Volatility",
+        "Drawdown Count",
+    ]
+    benchmark_comparison = pd.DataFrame(
+        [
+            {
+                "Portfolio": portfolio_name,
+                **{
+                    column: metrics[column]
+                    for column in comparison_metric_columns
+                },
+            }
+            for portfolio_name, metrics in (
+                ("active_strategy", artifacts.metrics),
+                ("buy_and_hold", benchmark.metrics),
+            )
+        ]
+    )
+    benchmark_comparison.to_csv(
+        args.output_dir / "benchmark_comparison.csv", index=False
+    )
     artifacts.asset_summary.to_csv(
         args.output_dir / "asset_summary.csv", index=False
     )
@@ -344,6 +395,21 @@ def main() -> None:
         "feature_prices": "adjusted_close",
         "dividend_cash_flows_included": False,
         "slippage_bps": args.slippage_bps,
+        "buy_and_hold_benchmark": {
+            "output_file": "benchmark_comparison.csv",
+            "initial_weights": benchmark.initial_weights,
+            "entry_timing": "first_available_asset_open_on_or_after_effective_start",
+            "position_policy": "buy_once_at_initial_weight_and_never_rebalance",
+            "ending_position_policy": "mark_to_final_raw_close_without_forced_liquidation",
+            "cash_policy": "unallocated_initial_weight_and_rounding_residual_remain_cash",
+            "costs_and_fx": "same_commissions_slippage_and_point_in_time_fx_as_active_strategy",
+            "trade_metrics_policy": "omitted_because_positions_remain_open_at_cutoff",
+        },
+        "pnl_decomposition": {
+            "realized": "closed-trade P&L plus any realized P&L on partially closed open positions, net of all incurred transaction costs",
+            "unrealized": "remaining open quantity marked from average execution price to final raw close",
+            "return_contributions": "each P&L component divided by initial portfolio capital; contributions sum to total return",
+        },
         "risk_metrics": {
             "return_frequency": risk_free_settings[
                 "portfolio_return_frequency"
@@ -386,6 +452,14 @@ def main() -> None:
     print(f"  net return: {artifacts.metrics['Total Return']:.2%}")
     print(f"  orders: {len(artifacts.result.fills)}")
     print(f"  completed round trips: {int(artifacts.metrics['Number of Trades'])}")
+    print(
+        "  buy-and-hold return: "
+        f"{benchmark.metrics['Total Return']:.2%}"
+    )
+    print(
+        "  excess return versus buy-and-hold: "
+        f"{artifacts.metrics['Total Return'] - benchmark.metrics['Total Return']:.2%}"
+    )
     if unavailable:
         print("  awaiting external signals: " + ", ".join(unavailable))
     print("\nPer-asset activity")

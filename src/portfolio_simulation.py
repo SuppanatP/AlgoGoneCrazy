@@ -44,6 +44,16 @@ class PortfolioSimulationArtifacts:
     unavailable_signal_assets: list[str]
 
 
+@dataclass
+class BuyAndHoldBenchmarkArtifacts:
+    """Comparable passive portfolio using the simulation's initial sleeves."""
+
+    result: BacktestResult
+    metrics: pd.Series
+    asset_summary: pd.DataFrame
+    initial_weights: dict[str, float]
+
+
 class BaseCurrencyProjectCostModel:
     """Apply native broker fees and return every cost in portfolio currency."""
 
@@ -610,11 +620,36 @@ def _asset_summary(
         ending_qty = float(portfolio.position(asset))
         ending_price = float(portfolio.last_price.get(asset, np.nan))
         ending_value = ending_qty * ending_price if np.isfinite(ending_price) else 0.0
+        open_position = portfolio.positions.get(asset)
+        closed_trade_realized = (
+            float(asset_trades["net_pnl"].sum())
+            if not asset_trades.empty
+            else 0.0
+        )
+        open_trade_realized = (
+            float(open_position.realized_pnl - open_position.fees)
+            if open_position is not None
+            else 0.0
+        )
+        realized_net_pnl = closed_trade_realized + open_trade_realized
+        unrealized_pnl = (
+            float(open_position.qty * (ending_price - open_position.avg_price))
+            if open_position is not None and np.isfinite(ending_price)
+            else 0.0
+        )
         execution_cash_flow = (
             float((-(asset_fills["qty"] * asset_fills["price"]) - asset_fills["fee"]).sum())
             if not asset_fills.empty
             else 0.0
         )
+        contribution = execution_cash_flow + ending_value
+        if not np.isclose(
+            contribution,
+            realized_net_pnl + unrealized_pnl,
+            rtol=0.0,
+            atol=1e-6,
+        ):
+            raise ValueError(f"P&L decomposition does not reconcile for {asset}")
         rows.append(
             {
                 "instrument_id": asset,
@@ -628,10 +663,31 @@ def _asset_summary(
                     if not asset_fills.empty
                     else 0.0
                 ),
-                "net_pnl_contribution_usd": execution_cash_flow + ending_value,
+                "realized_net_pnl_usd": realized_net_pnl,
+                "unrealized_mark_to_market_pnl_usd": unrealized_pnl,
+                "net_pnl_contribution_usd": contribution,
             }
         )
     return pd.DataFrame(rows)
+
+
+def _add_pnl_decomposition(
+    metrics: pd.Series,
+    asset_summary: pd.DataFrame,
+    initial_cash: float,
+) -> None:
+    """Add realized/unrealized components that reconcile to total return."""
+    realized = float(asset_summary["realized_net_pnl_usd"].sum())
+    unrealized = float(
+        asset_summary["unrealized_mark_to_market_pnl_usd"].sum()
+    )
+    net_profit = float(metrics["Net Profit"])
+    if not np.isclose(realized + unrealized, net_profit, rtol=0.0, atol=1e-6):
+        raise ValueError("Portfolio P&L decomposition does not reconcile")
+    metrics["Realized Net P&L"] = realized
+    metrics["Unrealized Mark-to-Market P&L"] = unrealized
+    metrics["Realized Return Contribution"] = realized / initial_cash
+    metrics["Unrealized Return Contribution"] = unrealized / initial_cash
 
 
 def daily_strategy_returns_after_costs(
@@ -758,6 +814,169 @@ def daily_strategy_returns_after_costs(
     result = pd.concat(outputs, axis=1).sort_index()
     result.index.name = "session_date"
     return result
+
+
+def simulate_buy_and_hold_benchmark(
+    canonical: pd.DataFrame,
+    risk_weights: pd.DataFrame,
+    fx_rates: pd.DataFrame,
+    sizing_config: Mapping[str, Any],
+    cost_assumptions: CostAssumptions,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    *,
+    slippage_bps: float = 0.0,
+    risk_free_annual_rates: pd.Series | None = None,
+    risk_free_source: str | None = None,
+    risk_metric_periods_per_year: int = 365,
+) -> BuyAndHoldBenchmarkArtifacts:
+    """Buy each initial sleeve once at its first available open and hold.
+
+    The benchmark uses the active simulation's first point-in-time risk weights,
+    initial capital, raw execution and valuation prices, FX conversion, quantity
+    increments and transaction-cost assumptions. It is never rebalanced or
+    force-liquidated, so its ending positions are marked at the final raw close.
+    """
+    configured_assets = sizing_config["assets"]
+    assets = list(configured_assets)
+    if risk_weights.empty:
+        raise ValueError("No portfolio risk weights are available for the benchmark")
+    effective_start = max(start, risk_weights.index.min())
+    if effective_start >= end:
+        raise ValueError("No ready risk weights overlap the benchmark period")
+
+    eligible_weights = risk_weights.loc[risk_weights.index <= effective_start]
+    if eligible_weights.empty:
+        raise ValueError("No point-in-time initial weights are available")
+    initial_weights = {
+        asset: float(eligible_weights.iloc[-1][asset]) for asset in assets
+    }
+    if any(weight < 0 or not np.isfinite(weight) for weight in initial_weights.values()):
+        raise ValueError("Buy-and-hold weights must be finite and non-negative")
+
+    static_rates = {
+        str(currency).upper(): float(rate)
+        for currency, rate in sizing_config.get("static_rates_to_base", {}).items()
+    }
+    static_rates.setdefault("USD", 1.0)
+    quote_currencies = {
+        asset: str(configured_assets[asset]["quote_currency"]).upper()
+        for asset in assets
+    }
+    base_bars: dict[str, pd.DataFrame] = {}
+    for asset in assets:
+        bars = canonical.loc[
+            canonical["instrument_id"].eq(asset)
+            & canonical["bar_open_time_utc"].ge(effective_start)
+            & canonical["bar_open_time_utc"].lt(end),
+            ["bar_open_time_utc", "open", "close"],
+        ].copy()
+        if bars.empty:
+            raise ValueError(f"No {asset} bars overlap the benchmark period")
+        bars = bars.set_index("bar_open_time_utc").sort_index()
+        rates = _rates_for_bars(
+            pd.DatetimeIndex(bars.index),
+            asset,
+            quote_currencies[asset],
+            static_rates,
+            fx_rates,
+        )
+        bars["rate_to_usd"] = rates
+        bars["open_usd"] = bars["open"].astype(float) * rates
+        bars["close_usd"] = bars["close"].astype(float) * rates
+        base_bars[asset] = bars
+
+    timeline = pd.DatetimeIndex([])
+    for bars in base_bars.values():
+        timeline = timeline.union(bars.index)
+    timeline = timeline.sort_values()
+    if timeline.empty:
+        raise ValueError("The buy-and-hold benchmark timeline is empty")
+
+    cost_model = BaseCurrencyProjectCostModel(
+        cost_assumptions,
+        quote_currencies,
+        base_currency=str(sizing_config.get("base_currency", "USD")),
+        slippage_bps=slippage_bps,
+    )
+    initial_cash = float(sizing_config.get("initial_cash_base", 100_000.0))
+    portfolio = Portfolio(initial_cash, cost_model=cost_model)
+    steps = {
+        asset: float(configured_assets[asset]["quantity_step"])
+        for asset in assets
+    }
+    entered: set[str] = set()
+
+    for timestamp in timeline:
+        present = [asset for asset in assets if timestamp in base_bars[asset].index]
+        rates = {
+            asset: float(base_bars[asset].at[timestamp, "rate_to_usd"])
+            for asset in present
+        }
+        cost_model.set_rates(rates)
+        for asset in present:
+            if asset in entered:
+                continue
+            price = float(base_bars[asset].at[timestamp, "open_usd"])
+            desired = initial_weights[asset] * initial_cash / price
+            desired = np.floor(desired / steps[asset]) * steps[asset]
+            desired = _fit_target_to_cash(
+                portfolio, asset, desired, price, steps[asset]
+            )
+            portfolio.target_position(timestamp, asset, desired, price)
+            entered.add(asset)
+        closes = {
+            asset: float(base_bars[asset].at[timestamp, "close_usd"])
+            for asset in present
+        }
+        portfolio.mark(timestamp, closes)
+
+    curve = portfolio.equity_curve
+    position_columns = [f"pos_{asset}" for asset in assets]
+    positions = curve.reindex(columns=position_columns, fill_value=0.0).copy()
+    positions.columns = assets
+    result = BacktestResult(
+        equity=curve["equity"],
+        trades=portfolio.trades,
+        fills=portfolio.fills,
+        positions=positions,
+        curve=curve,
+        portfolio=portfolio,
+    )
+    initial_time = curve.index[0] - pd.Timedelta(nanoseconds=1)
+    metric_equity = pd.concat(
+        [pd.Series([initial_cash], index=[initial_time]), result.equity]
+    )
+    metric_positions = pd.concat(
+        [pd.DataFrame(0.0, index=[initial_time], columns=assets), positions]
+    )
+    metrics = compute_metrics(
+        metric_equity,
+        result.trades,
+        metric_positions,
+        result.fills,
+        periods_per_year=risk_metric_periods_per_year,
+        risk_free_rate=(
+            risk_free_annual_rates
+            if risk_free_annual_rates is not None
+            else 0.0
+        ),
+        metric_frequency="daily",
+        risk_free_source=risk_free_source,
+        drop_incomplete_final_day=True,
+        annualize_by_elapsed_time=True,
+    )
+    metrics["Initial Equity"] = initial_cash
+    metrics["Final Equity"] = float(result.equity.iloc[-1])
+    metrics["Net Profit"] = float(result.equity.iloc[-1] - initial_cash)
+    asset_summary = _asset_summary(assets, portfolio)
+    _add_pnl_decomposition(metrics, asset_summary, initial_cash)
+    return BuyAndHoldBenchmarkArtifacts(
+        result=result,
+        metrics=metrics,
+        asset_summary=asset_summary,
+        initial_weights=initial_weights,
+    )
 
 
 def simulate_portfolio(
@@ -1132,6 +1351,8 @@ def simulate_portfolio(
     metrics["Initial Equity"] = initial_cash
     metrics["Final Equity"] = float(result.equity.iloc[-1])
     metrics["Net Profit"] = float(result.equity.iloc[-1] - initial_cash)
+    asset_summary = _asset_summary(assets, portfolio)
+    _add_pnl_decomposition(metrics, asset_summary, initial_cash)
 
     signal_output = signal_output.loc[
         signal_output["bar_open_time_utc"].ge(effective_start)
@@ -1142,6 +1363,6 @@ def simulate_portfolio(
         metrics=metrics,
         decisions=pd.DataFrame(decisions),
         signals=signal_output,
-        asset_summary=_asset_summary(assets, portfolio),
+        asset_summary=asset_summary,
         unavailable_signal_assets=unavailable_signal_assets,
     )
