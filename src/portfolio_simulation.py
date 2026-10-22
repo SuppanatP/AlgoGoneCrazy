@@ -620,11 +620,36 @@ def _asset_summary(
         ending_qty = float(portfolio.position(asset))
         ending_price = float(portfolio.last_price.get(asset, np.nan))
         ending_value = ending_qty * ending_price if np.isfinite(ending_price) else 0.0
+        open_position = portfolio.positions.get(asset)
+        closed_trade_realized = (
+            float(asset_trades["net_pnl"].sum())
+            if not asset_trades.empty
+            else 0.0
+        )
+        open_trade_realized = (
+            float(open_position.realized_pnl - open_position.fees)
+            if open_position is not None
+            else 0.0
+        )
+        realized_net_pnl = closed_trade_realized + open_trade_realized
+        unrealized_pnl = (
+            float(open_position.qty * (ending_price - open_position.avg_price))
+            if open_position is not None and np.isfinite(ending_price)
+            else 0.0
+        )
         execution_cash_flow = (
             float((-(asset_fills["qty"] * asset_fills["price"]) - asset_fills["fee"]).sum())
             if not asset_fills.empty
             else 0.0
         )
+        contribution = execution_cash_flow + ending_value
+        if not np.isclose(
+            contribution,
+            realized_net_pnl + unrealized_pnl,
+            rtol=0.0,
+            atol=1e-6,
+        ):
+            raise ValueError(f"P&L decomposition does not reconcile for {asset}")
         rows.append(
             {
                 "instrument_id": asset,
@@ -638,10 +663,31 @@ def _asset_summary(
                     if not asset_fills.empty
                     else 0.0
                 ),
-                "net_pnl_contribution_usd": execution_cash_flow + ending_value,
+                "realized_net_pnl_usd": realized_net_pnl,
+                "unrealized_mark_to_market_pnl_usd": unrealized_pnl,
+                "net_pnl_contribution_usd": contribution,
             }
         )
     return pd.DataFrame(rows)
+
+
+def _add_pnl_decomposition(
+    metrics: pd.Series,
+    asset_summary: pd.DataFrame,
+    initial_cash: float,
+) -> None:
+    """Add realized/unrealized components that reconcile to total return."""
+    realized = float(asset_summary["realized_net_pnl_usd"].sum())
+    unrealized = float(
+        asset_summary["unrealized_mark_to_market_pnl_usd"].sum()
+    )
+    net_profit = float(metrics["Net Profit"])
+    if not np.isclose(realized + unrealized, net_profit, rtol=0.0, atol=1e-6):
+        raise ValueError("Portfolio P&L decomposition does not reconcile")
+    metrics["Realized Net P&L"] = realized
+    metrics["Unrealized Mark-to-Market P&L"] = unrealized
+    metrics["Realized Return Contribution"] = realized / initial_cash
+    metrics["Unrealized Return Contribution"] = unrealized / initial_cash
 
 
 def daily_strategy_returns_after_costs(
@@ -923,10 +969,12 @@ def simulate_buy_and_hold_benchmark(
     metrics["Initial Equity"] = initial_cash
     metrics["Final Equity"] = float(result.equity.iloc[-1])
     metrics["Net Profit"] = float(result.equity.iloc[-1] - initial_cash)
+    asset_summary = _asset_summary(assets, portfolio)
+    _add_pnl_decomposition(metrics, asset_summary, initial_cash)
     return BuyAndHoldBenchmarkArtifacts(
         result=result,
         metrics=metrics,
-        asset_summary=_asset_summary(assets, portfolio),
+        asset_summary=asset_summary,
         initial_weights=initial_weights,
     )
 
@@ -1303,6 +1351,8 @@ def simulate_portfolio(
     metrics["Initial Equity"] = initial_cash
     metrics["Final Equity"] = float(result.equity.iloc[-1])
     metrics["Net Profit"] = float(result.equity.iloc[-1] - initial_cash)
+    asset_summary = _asset_summary(assets, portfolio)
+    _add_pnl_decomposition(metrics, asset_summary, initial_cash)
 
     signal_output = signal_output.loc[
         signal_output["bar_open_time_utc"].ge(effective_start)
@@ -1313,6 +1363,6 @@ def simulate_portfolio(
         metrics=metrics,
         decisions=pd.DataFrame(decisions),
         signals=signal_output,
-        asset_summary=_asset_summary(assets, portfolio),
+        asset_summary=asset_summary,
         unavailable_signal_assets=unavailable_signal_assets,
     )

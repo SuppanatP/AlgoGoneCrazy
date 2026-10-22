@@ -612,7 +612,12 @@ passive portfolio that buys the same initial sleeves at each asset's first
 available opening price, applies the same FX and commission assumptions, never
 rebalances, and marks all open positions at the final raw close. Trade-based
 metrics are omitted from that comparison because the passive positions remain
-open at the cutoff.
+open at the cutoff. Both summary files split total P&L and total return into
+realized and unrealized contributions. Realized P&L includes closed trades and
+any realized portion of a partially closed open position, net of all incurred
+transaction costs. Unrealized P&L marks the remaining open quantity from its
+average execution price to the final raw close. The two return contributions
+are divided by initial capital and reconcile exactly to total return.
 Positions remain open at the final close to match a live-period snapshot. Raw
 prices are used for execution and valuation; separate dividend cash flows are
 not yet present in the source data and are recorded as excluded in the manifest.

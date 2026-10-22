@@ -285,7 +285,11 @@ def main() -> None:
     )
     project_metric_columns = [
         "Net Profit",
+        "Realized Net P&L",
+        "Unrealized Mark-to-Market P&L",
         "Total Return",
+        "Realized Return Contribution",
+        "Unrealized Return Contribution",
         "Annual Return",
         "Sharpe Ratio",
         "Max Drawdown",
@@ -305,7 +309,11 @@ def main() -> None:
     project_metrics.to_csv(args.output_dir / "project_metrics.csv", index=False)
     comparison_metric_columns = [
         "Net Profit",
+        "Realized Net P&L",
+        "Unrealized Mark-to-Market P&L",
         "Total Return",
+        "Realized Return Contribution",
+        "Unrealized Return Contribution",
         "Annual Return",
         "Sharpe Ratio",
         "Max Drawdown",
@@ -396,6 +404,11 @@ def main() -> None:
             "cash_policy": "unallocated_initial_weight_and_rounding_residual_remain_cash",
             "costs_and_fx": "same_commissions_slippage_and_point_in_time_fx_as_active_strategy",
             "trade_metrics_policy": "omitted_because_positions_remain_open_at_cutoff",
+        },
+        "pnl_decomposition": {
+            "realized": "closed-trade P&L plus any realized P&L on partially closed open positions, net of all incurred transaction costs",
+            "unrealized": "remaining open quantity marked from average execution price to final raw close",
+            "return_contributions": "each P&L component divided by initial portfolio capital; contributions sum to total return",
         },
         "risk_metrics": {
             "return_frequency": risk_free_settings[
