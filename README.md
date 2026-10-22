@@ -543,8 +543,8 @@ python run_portfolio_simulation.py \
 ```
 
 The output directory is ignored. Review `performance_summary.csv`,
-`asset_summary.csv`, and the raw-versus-scaled target columns in
-`decisions.csv`. A missing BTC target file stops a complete run;
+`benchmark_comparison.csv`, `asset_summary.csv`, and the raw-versus-scaled
+target columns in `decisions.csv`. A missing BTC target file stops a complete run;
 `--allow-missing-external` is only a temporary connectivity mode and must not
 be used for policy selection. The simulator uses one USD 500,000
 ledger, historical
@@ -603,10 +603,16 @@ the `2026-10-01T00:00:00Z` selection boundary.
 
 Outputs beneath `results/portfolio_simulation/` include `decisions.csv`,
 `fills.csv`, `trades.csv`, `equity_curve.csv`, `performance_summary.csv`,
-`project_metrics.csv`, `asset_summary.csv`, risk and FX diagnostics, and a
-reproducibility manifest. `project_metrics.csv` is the concise presentation
-table containing P&L and the metrics requested in the project brief;
-`performance_summary.csv` contains the same submission-facing metric set.
+`project_metrics.csv`, `benchmark_comparison.csv`, `asset_summary.csv`, risk
+and FX diagnostics, and a reproducibility manifest. `project_metrics.csv` is
+the concise presentation table containing P&L and the metrics requested in the
+project brief; `performance_summary.csv` contains the same submission-facing
+metric set. `benchmark_comparison.csv` compares the active portfolio with a
+passive portfolio that buys the same initial sleeves at each asset's first
+available opening price, applies the same FX and commission assumptions, never
+rebalances, and marks all open positions at the final raw close. Trade-based
+metrics are omitted from that comparison because the passive positions remain
+open at the cutoff.
 Positions remain open at the final close to match a live-period snapshot. Raw
 prices are used for execution and valuation; separate dividend cash flows are
 not yet present in the source data and are recorded as excluded in the manifest.
