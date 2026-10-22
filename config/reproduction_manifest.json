@@ -1,0 +1,115 @@
+{
+  "manifest_role": "tracked_recipe_for_reproducing_the_frozen_spy_sti_selection",
+  "hash_algorithm": "sha256",
+  "working_directory": "repository_root",
+  "selection_cutoff_utc_exclusive": "2026-10-01T00:00:00Z",
+  "command": [
+    "python",
+    "run_two_week_strategy_optimization.py",
+    "--input-file",
+    "data/canonical/market_bars_30m_training_validation.csv",
+    "--fx-file",
+    "data/fx/fx_rates_to_usd.csv",
+    "--config-file",
+    "config/sti_mean_reversion_expanded_optimization.json",
+    "--selected-strategies",
+    "config/strategy_search_baseline.json",
+    "--sizing-config",
+    "config/portfolio_sizing.json",
+    "--cost-config",
+    "config/cost_assumptions.json",
+    "--output-dir",
+    "results/strategy_selection",
+    "--progress-every",
+    "10"
+  ],
+  "external_inputs": {
+    "canonical_market_data": {
+      "path": "data/canonical/market_bars_30m_training_validation.csv",
+      "sha256": "1d5d7bcdfdc85f48fe8f7a052a18ea63739b8c4adc5bc78922537a035d0156d8",
+      "row_count": 64012,
+      "instrument_ids": [
+        "btc_usdt",
+        "spy_usd",
+        "sti_es3_sgd"
+      ],
+      "latest_bar_open_time_utc": "2026-09-30T23:30:00Z",
+      "tracked_by_git": false
+    },
+    "fx_rates": {
+      "path": "data/fx/fx_rates_to_usd.csv",
+      "sha256": "344828ebeb5297b50168e8f52edb98f7047948d378960483c6d1b9766e76656e",
+      "tracked_by_git": false
+    }
+  },
+  "tracked_inputs": {
+    "search_grid_and_periods": {
+      "path": "config/sti_mean_reversion_expanded_optimization.json",
+      "sha256": "a19697f31ee4adfa045e441039d19d6a40e18a0084ebdedc5579bfb20de6626a"
+    },
+    "neutral_search_baseline": {
+      "path": "config/strategy_search_baseline.json",
+      "sha256": "8bffd1d6819a81228026fb16cc24e3a3166a62e72b5083c3b76a50565d9e76be"
+    },
+    "selection_time_sizing": {
+      "path": "config/portfolio_sizing.json",
+      "sha256": "8eb95f14a1f69362923c6d005beb8d1ae1db6f78fc7125045a74e5306ef7a977"
+    },
+    "transaction_costs": {
+      "path": "config/cost_assumptions.json",
+      "sha256": "fe46b0519ec44a0d2425442b9bd145bfb4cbd8b6137ce193e809b59f2af104ba"
+    },
+    "frozen_selection": {
+      "path": "config/selected_strategies.json",
+      "sha256": "96415ac5eee5aa13631b7157dd6be701cc5c6b4c6479729b68486868b2e00f7c"
+    },
+    "btc_reproducibility_manifest": {
+      "path": "config/btc_strategy.json",
+      "sha256": "1c74f6416350324c49a755b34288f69e874a86c74c43d9de107f8c1f766fa43b",
+      "note": "The BTC manifest contains the selected model-file paths and their own SHA-256 fingerprints; BTC is not part of the SPY/STI grid search."
+    },
+    "python_requirements": {
+      "path": "requirements.txt",
+      "sha256": "e6038541cc43acb9517cb836fe4d90acee1e8ba819d34fe5f25d7ea64ee007d8"
+    }
+  },
+  "expected_selection": {
+    "spy_usd": {
+      "candidate_id": "spy_usd__momentum_0041",
+      "strategy": "momentum",
+      "decision_interval_minutes": 120,
+      "parameters": {
+        "fast_window": 8,
+        "slow_window": 16,
+        "momentum_lookback": 8,
+        "entry_threshold": 0.0025,
+        "exit_threshold": 0.0
+      }
+    },
+    "sti_es3_sgd": {
+      "candidate_id": "sti_es3_sgd__mean_reversion_0052",
+      "strategy": "mean_reversion",
+      "decision_interval_minutes": 120,
+      "parameters": {
+        "window": 16,
+        "entry_z_score": -1.25,
+        "exit_z_score": 0.25,
+        "minimum_holding_bars": 4,
+        "cooldown_bars": 4,
+        "maximum_holding_bars": 20
+      }
+    }
+  },
+  "verified_environment": {
+    "python": "3.13.5",
+    "pandas": "2.3.1",
+    "numpy": "2.3.2",
+    "lightgbm": "4.7.0",
+    "scikit_learn": "1.9.1"
+  },
+  "generated_outputs": {
+    "directory": "results/strategy_selection",
+    "tracked_by_git": false,
+    "note": "The run-specific optimization_manifest.json and result tables are generated evidence, not authoritative inputs."
+  }
+}

@@ -6,7 +6,7 @@ Usage:
   python report_metrics.py --records path/to/records --no-plot
 
 Outputs (in results/):
-  metrics_table.csv              all report metrics incl. transaction costs
+  metrics_table.csv              project performance metrics
   per_asset.csv                  trades, P&L before/after costs, fees, slippage per asset
   figures/equity_drawdown.png    equity (net vs before costs), drawdown, cumulative costs
 Open positions at the end are valued at the last close (equity) but are not counted

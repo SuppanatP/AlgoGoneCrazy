@@ -192,46 +192,6 @@ def cumulative_costs(fills: pd.DataFrame, index: pd.Index) -> pd.Series:
     return per_ts.reindex(index.union(per_ts.index)).ffill().reindex(index).fillna(0.0)
 
 
-def cost_metrics(equity: pd.Series, fills: pd.DataFrame, trades: Optional[pd.DataFrame] = None,
-                 periods_per_year: int = PERIODS_PER_YEAR_30M,
-                 annualize_by_elapsed_time: bool = False) -> dict:
-    """Transaction-cost section of the report."""
-    n_years = (
-        _elapsed_years(equity, periods_per_year)
-        if annualize_by_elapsed_time
-        else (len(equity) - 1) / periods_per_year
-    )
-    fees = fills["fee"].sum() if len(fills) else 0.0
-    slip = fills["slippage_cost"].sum() if len(fills) else 0.0
-    total = fees + slip
-    notional = fills["notional"].sum() if len(fills) else 0.0
-    gross_equity = equity + cumulative_costs(fills, equity.index)   # what equity would be with zero costs
-    ann_net = _annual_return(
-        equity,
-        periods_per_year,
-        use_elapsed_time=annualize_by_elapsed_time,
-    )
-    ann_gross = _annual_return(
-        gross_equity,
-        periods_per_year,
-        use_elapsed_time=annualize_by_elapsed_time,
-    )
-    n_trades = len(trades) if trades is not None else 0
-    return {
-        "Annual Return (before costs)": ann_gross,
-        "Annual Cost Drag": ann_gross - ann_net,
-        "Total Fees": fees,
-        "Total Slippage": slip,
-        "Total Transaction Cost": total,
-        "Transaction Cost (% of initial capital)": total / equity.iloc[0],
-        "Number of Orders": len(fills),
-        "Traded Notional": notional,
-        "Annual Turnover (x equity)": notional / equity.mean() / n_years if n_years > 0 else np.nan,
-        "Average Cost per Trade": total / n_trades if n_trades else np.nan,
-        "Cost (bps of traded notional)": total / notional * 1e4 if notional else np.nan,
-    }
-
-
 def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
                     positions=None, fills: Optional[pd.DataFrame] = None,
                     periods_per_year: int = PERIODS_PER_YEAR_30M,
@@ -239,14 +199,13 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
                     metric_frequency: str = "bar",
                     risk_free_source: str | None = None,
                     drop_incomplete_final_day: bool = True,
-                    annualize_by_elapsed_time: bool = False,
-                    dd_min_depth: float = 0.01) -> pd.Series:
-    """All report metrics for one strategy.
+                    annualize_by_elapsed_time: bool = False) -> pd.Series:
+    """Project-required performance metrics for one strategy.
 
     equity    : portfolio value per bar
     trades    : round-trip trade log
-    positions : position per bar (Series, or DataFrame with one column per asset)
-    fills     : order log with fee / slippage_cost / notional -> transaction-cost section
+    positions : retained for compatibility with existing callers
+    fills     : retained for compatibility; costs remain embedded in net equity
     """
     if metric_frequency == "daily":
         r = daily_portfolio_returns(
@@ -267,14 +226,13 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
     )
     excess = r - period_rf
     excess_std = excess.std(ddof=1)
-    downside = np.sqrt((np.minimum(excess, 0) ** 2).mean())
     ann_return = _annual_return(
         equity,
         periods_per_year,
         use_elapsed_time=annualize_by_elapsed_time,
     )
     mdd = max_drawdown(equity)
-    episodes = drawdown_episodes(equity, dd_min_depth)
+    all_episodes = drawdown_episodes(equity, min_depth=0.0)
 
     out = {
         "Total Return": equity.iloc[-1] / equity.iloc[0] - 1,
@@ -285,12 +243,8 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
             if excess_std > 0
             else np.nan
         ),
-        "Sortino Ratio": excess.mean() / downside * np.sqrt(periods_per_year) if downside > 0 else np.nan,
         "Max Drawdown": mdd,
-        "Calmar Ratio": ann_return / abs(mdd) if mdd < 0 else np.nan,
-        f"Drawdown Count (>= {dd_min_depth:.0%})": len(episodes),
-        "Longest Drawdown (days)":
-            episodes["duration"].max().total_seconds() / 86400 if len(episodes) else 0.0,
+        "Drawdown Count": len(all_episodes),
         "Risk Metric Return Frequency": metric_frequency,
         "Risk Metric Observations": len(r),
         "Risk Metric Periods per Year": periods_per_year,
@@ -300,35 +254,17 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
 
     if trades is not None and len(trades):
         pnl = trades["net_pnl"]
-        gross_win, gross_loss = pnl[pnl > 0].sum(), -pnl[pnl < 0].sum()
         out.update({
             "Number of Trades": len(trades),
             "Win Rate": (pnl > 0).mean(),
             "Average Holding Period (hours)":
                 trades["holding_period"].dt.total_seconds().mean() / 3600,
             "Profit per Trade": pnl.mean(),
-            "Average Return per Trade": trades["return_pct"].mean(),
-            "Profit Factor": gross_win / gross_loss if gross_loss > 0 else np.nan,
         })
     else:
         out.update({"Number of Trades": 0, "Win Rate": np.nan,
-                    "Average Holding Period (hours)": np.nan, "Profit per Trade": np.nan,
-                    "Average Return per Trade": np.nan, "Profit Factor": np.nan})
-
-    if positions is not None:
-        held = positions != 0
-        out["Exposure (time in market)"] = (held.any(axis=1) if held.ndim == 2 else held).mean()
-
-    if fills is not None:
-        out.update(
-            cost_metrics(
-                equity,
-                fills,
-                trades,
-                periods_per_year,
-                annualize_by_elapsed_time,
-            )
-        )
+                    "Average Holding Period (hours)": np.nan,
+                    "Profit per Trade": np.nan})
     return pd.Series(out)
 
 

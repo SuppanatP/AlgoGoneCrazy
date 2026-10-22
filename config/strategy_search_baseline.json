@@ -31,16 +31,6 @@
         "maximum_holding_bars": 20
       },
       "selection_source": "initial_development_baseline"
-    },
-    "btc_usdt": {
-      "signal_source": "external_csv",
-      "decision_interval_minutes": 30,
-      "path": "data/signals/btc_signals.csv",
-      "status": "awaiting_teammate",
-      "required_columns": [
-        "bar_open_time_utc",
-        "target_position"
-      ]
     }
   }
 }

@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-file",
         type=Path,
-        default=Path("data/canonical/market_bars_30m_simulation_live_to_date.csv"),
+        default=Path("data/canonical/market_bars_30m_simulation.csv"),
     )
     parser.add_argument(
         "--fx-file",
@@ -267,9 +267,26 @@ def main() -> None:
     artifacts.result.curve.reset_index().to_csv(
         args.output_dir / "equity_curve.csv", index=False
     )
-    pd.DataFrame([artifacts.metrics.to_dict()]).to_csv(
+    project_metric_columns = [
+        "Net Profit",
+        "Total Return",
+        "Annual Return",
+        "Sharpe Ratio",
+        "Max Drawdown",
+        "Win Rate",
+        "Annual Volatility",
+        "Drawdown Count",
+        "Number of Trades",
+        "Average Holding Period (hours)",
+        "Profit per Trade",
+    ]
+    project_metrics = pd.DataFrame(
+        [{column: artifacts.metrics[column] for column in project_metric_columns}]
+    )
+    project_metrics.to_csv(
         args.output_dir / "performance_summary.csv", index=False
     )
+    project_metrics.to_csv(args.output_dir / "project_metrics.csv", index=False)
     artifacts.asset_summary.to_csv(
         args.output_dir / "asset_summary.csv", index=False
     )
@@ -367,7 +384,7 @@ def main() -> None:
     print(f"  initial equity: {artifacts.metrics['Initial Equity']:,.2f} USD")
     print(f"  final equity: {artifacts.metrics['Final Equity']:,.2f} USD")
     print(f"  net return: {artifacts.metrics['Total Return']:.2%}")
-    print(f"  orders: {int(artifacts.metrics['Number of Orders'])}")
+    print(f"  orders: {len(artifacts.result.fills)}")
     print(f"  completed round trips: {int(artifacts.metrics['Number of Trades'])}")
     if unavailable:
         print("  awaiting external signals: " + ", ".join(unavailable))

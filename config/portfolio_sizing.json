@@ -1,6 +1,6 @@
 {
-  "configuration_status": "frozen_final_history_confidence_sizing",
-  "selection_note": "Final common sizing rule for SPY, ES3.SI, and BTCUSDT. It uses only point-in-time price history, contains no return or Sharpe forecast multiplier, and retains inactive signal allocations as cash.",
+  "configuration_status": "frozen_spy_sti_selection_sizing",
+  "selection_note": "Historical history-confidence sizing used to reproduce the pre-cutoff SPY/STI pair-selection workflow. It is not the final three-asset integration policy; that policy is defined in config/three_asset_portfolio.json. This configuration uses only point-in-time price history, contains no return or Sharpe forecast multiplier, and retains inactive signal allocations as cash.",
   "method": "capped_history_confidence_inverse_volatility",
   "comparison_methods": [
     "capped_history_confidence_inverse_volatility"
@@ -21,7 +21,7 @@
   "target_weight_change_threshold": 0.05,
   "resize_existing_positions_on_rebalance": false,
   "performance_measure": "none_history_confidence_and_inverse_volatility_only",
-  "signal_policy": "long_or_cash",
+  "signal_policy": "long_or_cash_for_spy_sti_selection",
   "inactive_allocation": "hold_as_cash",
   "base_currency": "USD",
   "initial_cash_base": 500000.0,
@@ -50,11 +50,6 @@
       "quote_currency": "SGD",
       "annualization_periods": 252,
       "quantity_step": 1.0
-    },
-    "btc_usdt": {
-      "quote_currency": "USDT",
-      "annualization_periods": 365,
-      "quantity_step": 0.000001
     }
   }
 }

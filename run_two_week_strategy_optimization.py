@@ -1,4 +1,4 @@
-"""Screen SPY/STI strategies for a two-week live horizon under USD costs."""
+"""Reproduce the pre-cutoff SPY/STI parameter-selection workflow."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config-file",
         type=Path,
-        default=Path("config/two_week_strategy_optimization.json"),
+        default=Path("config/sti_mean_reversion_expanded_optimization.json"),
     )
     parser.add_argument(
         "--selected-strategies",
@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("results/two_week_strategy_optimization"),
+        default=Path("results/strategy_selection"),
     )
     parser.add_argument("--slippage-bps", type=float, default=0.0)
     parser.add_argument(
@@ -79,8 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-joint-diagnostic",
         action="store_true",
         help=(
-            "Skip the rolling sizing-method comparison and the known September "
-            "SPY/STI portfolio comparison."
+            "Skip the rolling sizing-method comparison and configured pre-cutoff "
+            "SPY/STI portfolio validation."
         ),
     )
     parser.add_argument("--progress-every", type=int, default=10)
@@ -396,7 +396,7 @@ def main() -> None:
         "execution": "next_underlying_30m_bar_raw_open",
         "valuation": "raw_close_converted_point_in_time_to_usd",
         "features": "adjusted_close_at_configured_decision_frequency",
-        "known_september_period_role": "diagnostic_not_untouched_validation",
+        "joint_validation_period_role": "pre_cutoff_pair_selection",
         "configuration_snapshot": config,
     }
     (args.output_dir / "optimization_manifest.json").write_text(
@@ -422,7 +422,7 @@ def main() -> None:
         )
     )
     if not joint.empty:
-        print("\nKnown September joint diagnostics (not used for training selection)")
+        print("\nConfigured pre-cutoff joint validation")
         joint_columns = [
             "sizing_method",
             "spy_candidate_id",
