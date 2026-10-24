@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # FE5209 Group Project - Market Data Pipeline
 
 This README documents the retained strategy-selection workflow, the frozen
@@ -1174,14 +1173,11 @@ The cleaner never forward-fills or silently invents prices. This means a later
 feature module can calculate intraday returns within `session_date_local` and
 treat overnight movements separately, without learning artificial zero returns
 while an equity market was closed.
-=======
-FE5209 Group Project
 
 ## Diagnostic tests (`diagnostics.ipynb`)
 
 Reproduces the return diagnostics in the report appendix for SPY, ES3 and BTC, each at its own strategy's bar size and horizons: autocorrelation and Ljung–Box, Lo–MacKinlay variance ratio, Hurst exponent, ADF/KPSS with half-life, strategy-signal regressions with HAC t-stats, entry-rule edge vs cost, and rolling VR. It ends with a mean reversion / momentum / random walk verdict per asset. Only data before the 2026-10-01 holdout is used.
 
-**Data:** needs `market_bars_30m_through_261012.csv` (not tracked in git). The notebook looks for it in `results/` in the current folder or any parent folder (including `../AlgoGoneCrazy/results/`), or you can set the environment variable `FE5209_BARS_30M` to its full path.
+**Data:** reads `market_bars_30m_training_validation.csv` from the submission data package (`AlgoGoneCrazy-data-submission/data/canonical/`, not tracked in git). The notebook looks in the shared OneDrive submission folder first, then for `data/canonical/`, `AlgoGoneCrazy-data-submission/data/canonical/` or `submission/AlgoGoneCrazy-data-submission/data/canonical/` under the current folder or any parent folder. You can also set the environment variable `FE5209_BARS_30M` to its full path.
 
 **Run:** open from the repo root and run all cells top to bottom. Requires `numpy`, `pandas`, `matplotlib`, `statsmodels`, `scipy`.
->>>>>>> 3d14655 (Add diagnostics notebook at root (report appendix) + README section)
