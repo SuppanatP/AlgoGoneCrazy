@@ -5,6 +5,13 @@ SPY/STI selection, the standalone BTC strategy, and the final three-asset
 portfolio policy. Generated selection outputs remain local and are not part
 of the tracked repository.
 
+> **Separate evaluation package.** The `performance_evaluation/` folder is
+> not part of the pipeline described in this README. It contains the
+> performance evaluation notebook, the exploratory analysis behind the
+> strategy choice, and the frozen results they use. Unlike the rest of the
+> repository, its CSV, JSON and XLSX files are committed on purpose. See
+> [`performance_evaluation/README.md`](performance_evaluation/README.md).
+
 This first project phase extracts and cleans completed five-minute source bars
 for:
 
@@ -195,6 +202,11 @@ run_portfolio_weights.py  Rolling inverse-volatility/equal-weight entry point
 run_portfolio_simulation.py Shared-USD portfolio replay entry point
 run_daily.py              Stateful standalone BTC replay entry point
 report_metrics.py         Standalone BTC metrics and benchmark report
+
+performance_evaluation/   Separate evaluation package; not used by the pipeline above
+  portfolio_performance_evaluation.ipynb  Out-of-sample portfolio evaluation
+  results/                Frozen simulation outputs and notebook outputs (committed)
+  visualization/          Pre-holdout SPY/STI exploratory analysis and slide charts
 ```
 
 ## Strategy modules
@@ -1181,3 +1193,23 @@ Reproduces the return diagnostics in the report appendix for SPY, ES3 and BTC, e
 **Data:** reads `market_bars_30m_training_validation.csv` from the submission data package (`AlgoGoneCrazy-data-submission/data/canonical/`, not tracked in git). The notebook looks in the shared OneDrive submission folder first, then for `data/canonical/`, `AlgoGoneCrazy-data-submission/data/canonical/` or `submission/AlgoGoneCrazy-data-submission/data/canonical/` under the current folder or any parent folder. You can also set the environment variable `FE5209_BARS_30M` to its full path.
 
 **Run:** open from the repo root and run all cells top to bottom. Requires `numpy`, `pandas`, `matplotlib`, `statsmodels`, `scipy`.
+
+## Performance evaluation package (`performance_evaluation/`)
+
+This folder is kept apart from the source code and configuration above. The
+pipeline never reads from or writes to it, and it does not change how any
+`run_*.py` script behaves. It contains:
+
+- `portfolio_performance_evaluation.ipynb`: the out-of-sample evaluation of
+  the three-asset portfolio over 1–20 October 2026.
+- `results/`: the frozen simulation outputs and BTC targets the notebook reads,
+  plus the charts, tables and dashboard it writes.
+- `visualization/`: pre-holdout exploratory analysis of SPY and the STI ETF
+  that supports the momentum and mean-reversion choices, with the presentation
+  charts.
+
+The notebook imports `src/metrics.py`, `src/risk_free.py` and
+`src/trading_strategy/` and reads `config/selected_strategies.json`, but it
+only reads them. Market data is submitted separately in a `Data` folder placed
+next to the repository folder. Setup, data layout and run instructions are in
+[`performance_evaluation/README.md`](performance_evaluation/README.md).

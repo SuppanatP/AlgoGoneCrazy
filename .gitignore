@@ -27,3 +27,9 @@ __pycache__/
 
 # Generated reports.
 /docs/
+
+# performance_evaluation/ is a separate evaluation package. Its frozen inputs
+# and generated outputs are committed on purpose (see its README).
+!/performance_evaluation/**/*.csv
+!/performance_evaluation/**/*.json
+/performance_evaluation/results/eda_notebook/_rf_naive_tmp.csv

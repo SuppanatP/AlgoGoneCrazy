@@ -1,0 +1,4 @@
+instrument_id,orders,completed_round_trips,ending_quantity,ending_price_usd,ending_market_value_usd,transaction_cost_usd,net_pnl_contribution_usd
+spy_usd,8,2,0.0,769.01,0.0,8.421,1971.5229999998992
+sti_es3_sgd,6,3,0.0,4.269417272282489,0.0,242.98528599221598,413.88067075087747
+btc_usdt,43,19,0.314368,83028.15,26101.393459199997,2542.57049448478,4699.0498586751855

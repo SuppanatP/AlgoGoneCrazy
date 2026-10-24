@@ -1,0 +1,4 @@
+rebalance_date_utc,instrument_id,status,reason,return_observations,annualized_volatility,effective_volatility,volatility_source,history_observations,performance_observations,annualized_performance_sharpe,history_confidence,performance_multiplier,weighting_method,inverse_volatility_score,allocation_score,target_weight
+2026-10-01 00:00:00+00:00,spy_usd,ready,,60,0.07913498355448294,0.07913498355448294,standalone_strategy_returns_after_costs,60,60,,1.0,1.0,capped_strategy_return_inverse_volatility,12.636636226903605,12.636636226903605,0.33777356957232224
+2026-10-01 00:00:00+00:00,sti_es3_sgd,ready,,60,0.04724503200228337,0.05,standalone_strategy_returns_after_costs,60,60,,1.0,1.0,capped_strategy_return_inverse_volatility,20.0,20.0,0.1
+2026-10-01 00:00:00+00:00,btc_usdt,ready,,60,0.05218337884463916,0.05218337884463916,standalone_strategy_returns_after_costs,60,60,,1.0,1.0,capped_strategy_return_inverse_volatility,19.16318993021148,19.16318993021148,0.5122264304276778
