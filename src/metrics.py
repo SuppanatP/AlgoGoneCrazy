@@ -268,6 +268,71 @@ def compute_metrics(equity: pd.Series, trades: Optional[pd.DataFrame] = None,
     return pd.Series(out)
 
 
+def _metric_returns(
+    equity: pd.Series,
+    metric_frequency: str,
+    drop_incomplete_final_day: bool,
+) -> pd.Series:
+    """Return series built exactly as in compute_metrics."""
+    if metric_frequency == "daily":
+        r = daily_portfolio_returns(
+            equity,
+            drop_incomplete_final_day=drop_incomplete_final_day,
+        )
+    elif metric_frequency == "bar":
+        r = equity.pct_change().dropna()
+    else:
+        raise ValueError("metric_frequency must be 'bar' or 'daily'")
+    if len(r) < 2:
+        raise ValueError("At least two complete return observations are required")
+    return r
+
+
+def sortino_ratio(equity: pd.Series,
+                  periods_per_year: int = PERIODS_PER_YEAR_30M,
+                  risk_free_rate: float | pd.Series = 0.0,
+                  metric_frequency: str = "bar",
+                  drop_incomplete_final_day: bool = True) -> float:
+    """Annualised Sortino ratio of an equity curve.
+
+    Mean excess return over the risk-free rate divided by downside deviation,
+    the root mean square of negative excess returns (target = risk-free rate).
+    Returns and risk-free alignment follow compute_metrics, so the arguments
+    have the same meaning. Standalone: not included in compute_metrics output.
+    """
+    r = _metric_returns(equity, metric_frequency, drop_incomplete_final_day)
+    _, period_rf = _aligned_period_risk_free_returns(
+        r.index,
+        risk_free_rate,
+        periods_per_year,
+    )
+    excess = r - period_rf
+    downside = np.sqrt((np.minimum(excess, 0) ** 2).mean())
+    return (
+        float(excess.mean() / downside * np.sqrt(periods_per_year))
+        if downside > 0
+        else np.nan
+    )
+
+
+def calmar_ratio(equity: pd.Series,
+                 periods_per_year: int = PERIODS_PER_YEAR_30M,
+                 annualize_by_elapsed_time: bool = False) -> float:
+    """Calmar ratio: annual return divided by the absolute maximum drawdown.
+
+    Annual return and maximum drawdown are computed as in compute_metrics
+    (drawdown on the full equity curve). Returns NaN when there is no drawdown.
+    Standalone: not included in compute_metrics output.
+    """
+    ann_return = _annual_return(
+        equity,
+        periods_per_year,
+        use_elapsed_time=annualize_by_elapsed_time,
+    )
+    mdd = max_drawdown(equity)
+    return float(ann_return / abs(mdd)) if mdd < 0 else np.nan
+
+
 def per_asset_breakdown(trades: pd.DataFrame, fills: pd.DataFrame) -> pd.DataFrame:
     """Contribution of each asset: trades, win rate, P&L before/after costs, costs."""
     rows = {}

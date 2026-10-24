@@ -1,0 +1,18 @@
+Group,Metric,Value,Context
+Headline,Total return,+1.42%,Same-weights buy & hold -0.66%
+Headline,Max drawdown,-0.43%,Same-weights buy & hold -5.04%
+Headline,Annual volatility,4.68%,Same-weights buy & hold 15.35%
+Headline,Excess return vs buy & hold · SPY,+0.56 pp,Return on sleeve capital minus asset buy & hold
+Headline,Excess return vs buy & hold · STI,+5.86 pp,Return on sleeve capital minus asset buy & hold
+Headline,Excess return vs buy & hold · BTC,+2.55 pp,Return on sleeve capital minus asset buy & hold
+Drivers,Time in market (any sleeve),77%,"Average cash 65%, average gross exposure 38%"
+Drivers,Risk share / P&L share · SPY,30% / 28%,Covariance share of 30-min P&L vs share of net P&L
+Drivers,Risk share / P&L share · STI,5% / 6%,Covariance share of 30-min P&L vs share of net P&L
+Drivers,Risk share / P&L share · BTC,65% / 66%,Covariance share of 30-min P&L vs share of net P&L
+Drivers,Profit factor,4.29,Win rate 41.7% over 24 completed trades
+Drivers,BTC model-signal trades,"$4,849",2 trades
+Drivers,BTC daily-fallback trades,-$257,"17 trades, $1,246 in fees"
+Drivers,Transaction costs,"$2,794","28% of gross P&L, 5.9 bps of traded notional"
+Confidence,Sharpe ratio,4.62,"95% band -3.9 to +13.1 (Lo, 2002)"
+Confidence,Probability true Sharpe > 0,87%,"Bootstrap of daily excess returns, 20,000 resamples"
+Confidence,Return excluding best 2 days,-0.05%,"Best days: 01 Oct, 05 Oct"
